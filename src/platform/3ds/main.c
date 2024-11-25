@@ -29,7 +29,7 @@ struct CallbackData {
 static const char* INI_PATH = "/config/ftpsrv/config.ini";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 
-static LightLock g_mutex;
+static Handle g_mutex;
 static struct CallbackData* g_callback_data = NULL;
 static u32 g_num_events = 0;
 static volatile bool g_should_exit = false;
@@ -38,12 +38,12 @@ static PrintConsole topScreen;
 static PrintConsole bottomScreen;
 
 static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
-    LightLock_Lock(&g_mutex);
+    svcWaitSynchronization(g_mutex, UINT64_MAX);
         g_num_events++;
         g_callback_data = realloc(g_callback_data, g_num_events * sizeof(*g_callback_data));
         g_callback_data[g_num_events-1].type = type;
         strcpy(g_callback_data[g_num_events-1].msg, msg);
-    LightLock_Unlock(&g_mutex);
+    svcReleaseMutex(g_mutex);
 }
 
 static void consoleUpdate(void* c) {
@@ -53,7 +53,7 @@ static void consoleUpdate(void* c) {
 }
 
 static void processEvents(void) {
-    LightLock_Lock(&g_mutex);
+    svcWaitSynchronization(g_mutex, UINT64_MAX);
     consoleSelect(&bottomScreen);
     if (g_num_events) {
         for (int i = 0; i < g_num_events; i++) {
@@ -75,7 +75,7 @@ static void processEvents(void) {
         g_callback_data = NULL;
         consoleUpdate(NULL);
     }
-    LightLock_Unlock(&g_mutex);
+    svcReleaseMutex(g_mutex);
 }
 
 static void ftp_thread(void* arg) {
@@ -165,9 +165,15 @@ int main(void) {
     iprintf("\n");
     consoleUpdate(NULL);
 
-    LightLock_Init(&g_mutex);
+    if (R_FAILED(svcCreateMutex(&g_mutex, false))) {
+        return error_loop("failed svcCreateMutex()");
+    }
+
     s32 cpu_id = 0;
-	svcGetThreadIdealProcessor(&cpu_id, CUR_THREAD_HANDLE);
+	if (R_FAILED(svcGetThreadIdealProcessor(&cpu_id, CUR_THREAD_HANDLE))) {
+        return error_loop("failed svcGetThreadIdealProcessor()");
+    }
+
     Thread thread = threadCreate(ftp_thread, NULL, 1024*16, 0x2F, (cpu_id + 1) % 2, false);
 
 	while (aptMainLoop()) {
@@ -183,6 +189,7 @@ int main(void) {
     g_should_exit = true;
     threadJoin(thread, U64_MAX);
     threadFree(thread);
+    svcCloseHandle(g_mutex);
     socExit();
     gfxExit();
 

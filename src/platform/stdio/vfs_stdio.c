@@ -53,12 +53,16 @@ int ftp_vfs_fstat(struct FtpVfsFile* f, const char* path, struct stat* st) {
 }
 
 int ftp_vfs_close(struct FtpVfsFile* f) {
-    if (!f->fd) {
+    if (!ftp_vfs_isfile_open(f)) {
         return -1;
     }
     int rc = fclose(f->fd);
     f->fd = NULL;
     return rc;
+}
+
+int ftp_vfs_isfile_open(struct FtpVfsFile* f) {
+    return f->fd != NULL;
 }
 
 int ftp_vfs_opendir(struct FtpVfsDir* f, const char* path) {
@@ -86,11 +90,15 @@ int ftp_vfs_dirlstat(struct FtpVfsDir* f, const struct FtpVfsDirEntry* entry, co
 }
 
 int ftp_vfs_closedir(struct FtpVfsDir* f) {
-    if (f->fd) {
+    if (ftp_vfs_isdir_open(f)) {
         closedir(f->fd);
         f->fd = NULL;
     }
     return 0;
+}
+
+int ftp_vfs_isdir_open(struct FtpVfsDir* f) {
+    return f->fd != NULL;
 }
 
 int ftp_vfs_stat(const char* path, struct stat* st) {

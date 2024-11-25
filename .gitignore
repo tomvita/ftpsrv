@@ -4,3 +4,5 @@ build
 ftpsrv_2.c
 switch_stuff.c
 .vscode/settings.json
+out/
+.vscode/

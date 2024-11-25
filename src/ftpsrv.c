@@ -6,6 +6,7 @@
 #include "ftpsrv_vfs.h"
 #include "ftpsrv_socket.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -77,10 +78,10 @@ enum FTP_DATA_CONNECTION {
 
 enum FTP_TRANSFER_MODE {
     FTP_TRANSFER_MODE_NONE, // no transfer
-    // FTP_TRANSFER_MODE_LIST, // transfer using LIST
-    // FTP_TRANSFER_MODE_NLST, // transfer using NLST
     FTP_TRANSFER_MODE_RETR, // transfer using RETR
     FTP_TRANSFER_MODE_STOR, // transfer using STOR
+    FTP_TRANSFER_MODE_LIST, // transfer using LIST
+    FTP_TRANSFER_MODE_NLST, // transfer using NLST
 };
 
 enum FTP_AUTH_MODE {
@@ -103,13 +104,13 @@ struct FtpTransfer {
     enum FTP_TRANSFER_MODE mode;
 
     size_t offset;
-    size_t size; // only set during retr
+    size_t size; // only set during RETR, LIST and NLIST.
+    size_t index; // only used for NLIST and LIST devices.
 
     struct FtpVfsFile file_vfs;
-    // struct FtpVfsDir dir_vfs;
-    // struct FtpVfsDirEntry dir_vfs_entry;
+    struct FtpVfsDir dir_vfs;
 
-    // char list_buf[1024];
+    char list_buf[1024];
 };
 
 struct FtpSession {
@@ -134,7 +135,7 @@ struct FtpSession {
     int server_marker; // file offset when using REST
 
     struct Pathname pwd;   // current directory
-    struct Pathname tpath; // rename from buffer
+    struct Pathname temp_path; // rename from buffer / LIST fullpath
 };
 
 struct FtpCommand {
@@ -235,38 +236,6 @@ static inline unsigned socket_bind_port(void) {
     return ret;
 }
 
-#if 0
-// reads as many entries as possible until either it blocks or ends.
-static void ftp_list_2(struct FtpSession* session) {
-    int rc = 0;
-    errno = 0;
-    int has_entry = 0;
-
-    while (rc == 0) {
-        if (!has_entry) {
-
-        }
-
-        const char* name = ftp_vfs_dirname(&session->transfer.dir_vfs, &session->transfer.dir_vfs_entry);
-        if (!name) {
-            rc = -1;
-            break;
-        }
-
-        if (!strcmp(".", name) || !strcmp("..", name)) {
-            has_entry = 0;
-            continue;
-        }
-
-        struct Pathname filepath;
-        rc = snprintf(filepath.s, sizeof(filepath), "%s/%s", session->tpath.s, name);
-        if (rc <= 0 || rc > sizeof(filepath)) {
-            continue;
-        }
-    }
-}
-#endif
-
 // removes dangling '/' and duplicate '/' and converts '\\' to '/'
 static void remove_slashes(struct Pathname* pathname) {
     int match = 0;
@@ -351,12 +320,13 @@ static inline struct Pathname fix_path_for_device(const struct Pathname* path) {
 }
 
 // SOURCE: https://cr.yp.to/ftp/list/binls.html
-static int ftp_send_list_entry(const struct FtpSession* session, const time_t cur_time, const struct Pathname* fullpath, const char* name, const struct stat* st, int nlist) {
+static int ftp_build_list_entry(struct FtpSession* session, const time_t cur_time, const struct Pathname* fullpath, const char* name, const struct stat* st, int nlist) {
     int rc;
-    char buf[1024 * 4] = {0};
+    struct FtpTransfer* transfer = &session->transfer;
+    // char buf[1024 * 4] = {0};
 
     if (nlist) {
-        rc = snprintf(buf, sizeof(buf), "%s" TELNET_EOL, name);
+        rc = snprintf(transfer->list_buf, sizeof(transfer->list_buf), "%s" TELNET_EOL, name);
     } else {
         static const char months[12][4] = {
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -412,7 +382,7 @@ static int ftp_send_list_entry(const struct FtpSession* session, const time_t cu
         const unsigned nlink = st->st_nlink;
         const size_t size = S_ISDIR(st->st_mode) ? 0 : st->st_size;
 
-        rc = snprintf(buf, sizeof(buf), "%s %3u %s %s %13zu %s %3d %s %s%s" TELNET_EOL,
+        rc = snprintf(transfer->list_buf, sizeof(transfer->list_buf), "%s %3u %s %s %13zu %s %3d %s %s%s" TELNET_EOL,
             perms,
             nlink,
             ftp_vfs_getpwuid(st), ftp_vfs_getgrgid(st),
@@ -421,12 +391,11 @@ static int ftp_send_list_entry(const struct FtpSession* session, const time_t cu
             name, symlink_path.s);
     }
 
-    if (rc <= 0 || rc > sizeof(buf)) {
+    if (rc <= 0 || rc > sizeof(transfer->list_buf)) {
         // don't send anything on error or truncated
         rc = -1;
     } else {
-        // send everything.
-        rc = socket_send(session->data_sock, buf, rc, 0);
+        transfer->size = rc;
     }
 
     return rc;
@@ -486,6 +455,7 @@ static int ftp_data_open(struct FtpSession* session) {
     }
 
     if (rc > 0) {
+        ftp_set_socket_nonblocking_enable(session->data_sock);
         ftp_set_socket_keepalive_enable(session->data_sock);
         ftp_set_socket_throughput_enable(session->data_sock);
     }
@@ -507,49 +477,116 @@ static void ftp_data_transfer_end(struct FtpSession* session) {
     }
 
     ftp_vfs_close(&session->transfer.file_vfs);
+    ftp_vfs_closedir(&session->transfer.dir_vfs);
 
+    session->temp_path.s[0] = '\0';
     session->transfer.offset = 0;
     session->transfer.size = 0;
     session->transfer.mode = FTP_TRANSFER_MODE_NONE;
     session->data_connection = FTP_DATA_CONNECTION_NONE;
 }
 
-static void ftp_data_transfer_progress(struct FtpSession* session) {
+static void ftp_dir_data_transfer_progress(struct FtpSession* session) {
+    const time_t cur_time = time(NULL);
+    const bool nlist = session->transfer.mode == FTP_TRANSFER_MODE_NLST;
+    const bool device_list = g_ftp.cfg.devices && g_ftp.cfg.devices_count && !strcmp("/", session->temp_path.s);
+    struct FtpTransfer* transfer = &session->transfer;
+
+    // send as much data as possible.
+    while (1) {
+        if (transfer->size) {
+            errno = 0;
+            const int n = socket_send(session->data_sock, transfer->list_buf + transfer->offset, transfer->size, 0);
+            if (n < 0) {
+                // check if it failed due to anything but blocking.
+                if (errno != EWOULDBLOCK && errno != EAGAIN) {
+                    ftp_client_msg(session, "426 bad Connection closed; transfer aborted. %s", strerror(errno));
+                    ftp_data_transfer_end(session);
+                }
+                break;
+            } else if (n != transfer->size) {
+                // partial transfer.
+                transfer->offset += n;
+                transfer->size -= n;
+                break;
+            } else {
+                transfer->list_buf[0] = '\0';
+                transfer->offset = 0;
+                transfer->size = 0;
+
+                // check if we are finished with this transfer.
+                if (!ftp_vfs_isdir_open(&transfer->dir_vfs)) {
+                    if (!device_list || transfer->index == g_ftp.cfg.devices_count) {
+                        ftp_client_msg(session, "226 Closing data connection.");
+                        ftp_data_transfer_end(session);
+                        break;
+                    }
+                }
+            }
+        } else {
+            // parse the next file.
+            if (device_list) {
+                struct stat st = {0};
+                st.st_nlink = 1;
+                st.st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
+                ftp_build_list_entry(session, cur_time, NULL, g_ftp.cfg.devices[transfer->index++].mount, &st, nlist);
+            } else {
+                struct FtpVfsDirEntry entry;
+                const char* name = ftp_vfs_readdir(&transfer->dir_vfs, &entry);
+                if (!name) {
+                    ftp_client_msg(session, "226 Closing data connection.");
+                    ftp_data_transfer_end(session);
+                    break;
+                }
+
+                if (!strcmp(".", name) || !strcmp("..", name)) {
+                    continue;
+                }
+
+                static struct Pathname filepath;
+                int rc = snprintf(filepath.s, sizeof(filepath), "%s/%s", session->temp_path.s, name);
+                if (rc <= 0 || rc > sizeof(filepath)) {
+                    continue;
+                }
+
+                struct stat st = {0};
+                rc = ftp_vfs_dirlstat(&transfer->dir_vfs, &entry, filepath.s, &st);
+                if (rc < 0) {
+                    continue;
+                }
+
+                ftp_build_list_entry(session, cur_time, &filepath, name, &st, nlist);
+            }
+        }
+    }
+}
+
+static void ftp_file_data_transfer_progress(struct FtpSession* session) {
     int n = 0;
     errno = 0;
     struct FtpTransfer* transfer = &session->transfer;
 
-    switch (transfer->mode) {
-        case FTP_TRANSFER_MODE_NONE:
-            return;
-
-        case FTP_TRANSFER_MODE_RETR:
-            #if defined(FTP_VFS_FD) && defined(HAVE_SENDFILE) && HAVE_SENDFILE
-            n = sendfile(session->data_sock, transfer->file_vfs.fd, NULL, transfer->size - transfer->offset);
-            if (n < 0 && (errno == EINVAL || errno == ENOSYS))
-            #endif
-            {
-                const int read = n = ftp_vfs_read(&transfer->file_vfs, g_ftp.data_buf, sizeof(g_ftp.data_buf));
-                if (n > 0) {
-                    n = socket_send(session->data_sock, g_ftp.data_buf, n, 0);
-                    if (n >= 0 && n != read) {
-                        char buf[64];
-                        sprintf(buf, "%d vs %d", n, read);
-                        ftp_log_callback(FTP_API_LOG_TYPE_ERROR, "partial read");
-                        ftp_log_callback(FTP_API_LOG_TYPE_ERROR, buf);
-                        ftp_vfs_seek(&transfer->file_vfs, transfer->offset + (size_t)n);
-                    }
-                } else {
-                    ftp_log_callback(FTP_API_LOG_TYPE_ERROR, "vfs read failed");
-                }
-            }
-            break;
-        case FTP_TRANSFER_MODE_STOR:
-            n = socket_recv(session->data_sock, g_ftp.data_buf, sizeof(g_ftp.data_buf), 0);
+    if (transfer->mode == FTP_TRANSFER_MODE_RETR) {
+        #if defined(FTP_VFS_FD) && defined(HAVE_SENDFILE) && HAVE_SENDFILE
+        n = sendfile(session->data_sock, transfer->file_vfs.fd, NULL, transfer->size - transfer->offset);
+        if (n < 0 && (errno == EINVAL || errno == ENOSYS))
+        #endif
+        {
+            const int read = n = ftp_vfs_read(&transfer->file_vfs, g_ftp.data_buf, sizeof(g_ftp.data_buf));
             if (n > 0) {
-                n = ftp_vfs_write(&transfer->file_vfs, g_ftp.data_buf, n);
+                n = socket_send(session->data_sock, g_ftp.data_buf, n, 0);
+                if (n >= 0 && n != read) {
+                    ftp_vfs_seek(&transfer->file_vfs, transfer->offset + (size_t)n);
+                }
+            } else {
+                ftp_log_callback(FTP_API_LOG_TYPE_ERROR, "vfs read failed");
             }
-            break;
+        }
+    } else {
+        n = socket_recv(session->data_sock, g_ftp.data_buf, sizeof(g_ftp.data_buf), 0);
+        if (n > 0) {
+            n = ftp_vfs_write(&transfer->file_vfs, g_ftp.data_buf, n);
+        }
     }
 
     if (n < 0) {
@@ -568,6 +605,17 @@ static void ftp_data_transfer_progress(struct FtpSession* session) {
         } else if (transfer->mode == FTP_TRANSFER_MODE_RETR && transfer->offset == transfer->size) {
             ftp_client_msg(session, "226 Closing data connection.");
             ftp_data_transfer_end(session);
+        }
+    }
+}
+
+static void ftp_data_transfer_progress(struct FtpSession* session) {
+    const struct FtpTransfer* transfer = &session->transfer;
+    if (transfer->mode) {
+        if (transfer->mode == FTP_TRANSFER_MODE_RETR || transfer->mode == FTP_TRANSFER_MODE_STOR) {
+            ftp_file_data_transfer_progress(session);
+        } else {
+            ftp_dir_data_transfer_progress(session);
         }
     }
 }
@@ -710,8 +758,6 @@ static void ftp_cmd_PASV(struct FtpSession* session, const char* data) {
     if (rc < 0) {
         ftp_client_msg(session, "501 open failed Syntax error in parameters or arguments.");
     } else {
-        // ftp_set_socket_nonblocking_enable(session->pasv_sock);
-
         // copy current over ip addr
         session->pasv_sockaddr = session->control_sockaddr;
         session->pasv_sockaddr.sin_port = htons(socket_bind_port());
@@ -724,7 +770,6 @@ static void ftp_cmd_PASV(struct FtpSession* session, const char* data) {
             if (rc < 0) {
                 ftp_client_msg(session, "501 listen failed Syntax error in parameters or arguments. %s", strerror(errno));
             } else {
-                // struct sockaddr_in base_addr;
                 socklen_t base_len = sizeof(session->pasv_sockaddr);
                 rc = socket_getsockname(session->pasv_sock, (struct sockaddr*)&session->pasv_sockaddr, &base_len);
 
@@ -833,7 +878,6 @@ static void ftp_cmd_RETR(struct FtpSession* session, const char* data) {
                         if (rc < 0) {
                             ftp_client_msg(session, "425 Can't open data connection. %s", strerror(errno));
                         } else {
-                            ftp_set_socket_nonblocking_enable(session->data_sock);
                             session->transfer.mode = FTP_TRANSFER_MODE_RETR;
                             return;
                         }
@@ -872,7 +916,6 @@ static void ftp_cmd_STOR(struct FtpSession* session, const char* data) {
                 if (rc < 0) {
                     ftp_client_msg(session, "425 Can't open data connection. %s", strerror(errno));
                 } else {
-                    ftp_set_socket_nonblocking_enable(session->data_sock);
                     session->transfer.mode = FTP_TRANSFER_MODE_STOR;
                     return;
                 }
@@ -926,7 +969,7 @@ static void ftp_cmd_RNFR(struct FtpSession* session, const char* data) {
     if (rc <= 0) {
         ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
     } else {
-        rc = build_fullpath(session, &session->tpath, pathname);
+        rc = build_fullpath(session, &session->temp_path, pathname);
         if (rc < 0) {
             ftp_client_msg(session, "550 Requested action not taken. %s", strerror(errno));
         } else {
@@ -943,7 +986,7 @@ static void ftp_cmd_RNTO(struct FtpSession* session, const char* data) {
     if (rc <= 0) {
         ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
     } else {
-        if (session->tpath.s[0] == '\0') {
+        if (session->temp_path.s[0] == '\0') {
             ftp_client_msg(session, "503 Bad sequence of commands.");
         } else {
             struct Pathname dst_path;
@@ -951,7 +994,7 @@ static void ftp_cmd_RNTO(struct FtpSession* session, const char* data) {
             if (rc < 0) {
                 ftp_client_msg(session, "553 Requested action not taken. %s", strerror(errno));
             } else {
-                rc = ftp_vfs_rename(session->tpath.s, dst_path.s);
+                rc = ftp_vfs_rename(session->temp_path.s, dst_path.s);
                 if (rc < 0) {
                     ftp_client_msg(session, "553 Requested action not taken. %s", strerror(errno));
                 } else {
@@ -961,7 +1004,7 @@ static void ftp_cmd_RNTO(struct FtpSession* session, const char* data) {
         }
     }
 
-    session->tpath.s[0] = '\0';
+    session->temp_path.s[0] = '\0';
 }
 
 // ABOR <CRLF> | 225, 226, 500, 501, 502, 421
@@ -1044,94 +1087,67 @@ static void ftp_cmd_PWD(struct FtpSession* session, const char* data) {
 // used by LIST and NLIST
 static void ftp_list_directory(struct FtpSession* session, const char* data, int nlist) {
     struct Pathname pathname = {0};
+    const enum FTP_TRANSFER_MODE mode = nlist ? FTP_TRANSFER_MODE_NLST : FTP_TRANSFER_MODE_LIST;
     int rc = sscanf(data, "%"FTP_PATHNAME_SSCANF"[^"TELNET_EOL"]", pathname.s);
 
-    struct Pathname fullpath = {0};
     if (rc <= 0) {
         rc = 0;
-        fullpath = session->pwd;
+        session->temp_path = session->pwd;
     } else {
-        rc = build_fullpath(session, &fullpath, pathname);
+        rc = build_fullpath(session, &session->temp_path, pathname);
     }
 
     if (rc < 0) {
         ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
     } else {
-        const time_t cur_time = time(NULL);
         // check if on root and using devices
-        if (g_ftp.cfg.devices && g_ftp.cfg.devices_count && !strcmp("/", fullpath.s)) {
+        if (g_ftp.cfg.devices && g_ftp.cfg.devices_count && !strcmp("/", session->temp_path.s)) {
             rc = ftp_data_open(session);
             if (rc < 0) {
                 ftp_client_msg(session, "425 Can't open data connection. %s", strerror(errno));
             } else {
-                struct stat st = {0};
-                st.st_nlink = 1;
-                st.st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
-
-                for (int i = 0; i < g_ftp.cfg.devices_count; i++) {
-                    rc = ftp_send_list_entry(session, cur_time, NULL, g_ftp.cfg.devices[i].mount, &st, nlist);
-                    if (rc < 0) {
-                        break;
-                    }
-                }
-                ftp_client_msg(session, "226 Closing data connection.");
-                ftp_data_transfer_end(session);
+                session->transfer.index = 0;
+                session->transfer.mode = mode;
+                return;
             }
         } else {
-            fullpath = fix_path_for_device(&fullpath);
+            session->temp_path = fix_path_for_device(&session->temp_path);
             struct stat st = {0};
-            rc = ftp_vfs_lstat(fullpath.s, &st);
+            rc = ftp_vfs_lstat(session->temp_path.s, &st);
             if (rc < 0) {
-                ftp_client_msg(session, "450 Requested file action not taken. %s", strerror(errno));
+                ftp_client_msg(session, "450 Requested file action not taken. %s %s", strerror(errno), session->temp_path.s);
             } else {
-                rc = ftp_data_open(session);
-                if (rc < 0) {
-                    ftp_client_msg(session, "425 Can't open data connection. %s", strerror(errno));
-                } else {
-                    if (S_ISDIR(st.st_mode)) {
-                        struct FtpVfsDir dir;
-                        rc = ftp_vfs_opendir(&dir, fullpath.s);
-                        if (rc < 0) {
-                            ftp_client_msg(session, "450 Requested file action not taken. %s", strerror(errno));
-                        } else {
-                            const char* name;
-                            struct FtpVfsDirEntry entry;
-                            while ((name = ftp_vfs_readdir(&dir, &entry))) {
-                                if (!strcmp(".", name) || !strcmp("..", name)) {
-                                    continue;
-                                }
-
-                                static struct Pathname filepath;
-                                rc = snprintf(filepath.s, sizeof(filepath), "%s/%s", fullpath.s, name);
-                                if (rc <= 0 || rc > sizeof(filepath)) {
-                                    continue;
-                                }
-
-                                rc = ftp_vfs_dirlstat(&dir, &entry, filepath.s, &st);
-                                if (rc < 0) {
-                                    continue;
-                                }
-
-                                #if 1
-                                rc = ftp_send_list_entry(session, cur_time, &filepath, name, &st, nlist);
-                                if (rc < 0) {
-                                    break;
-                                }
-                                #endif
-                            }
-
-                            ftp_client_msg(session, "226 Closing data connection.");
-                            ftp_vfs_closedir(&dir);
-                        }
-                    } else if (!nlist) {
-                        // ftp_send_list_entry(session, cur_time, &fullpath, "", &st, nlist);
-                        ftp_send_list_entry(session, cur_time, &fullpath, pathname.s, &st, nlist);
-                        ftp_client_msg(session, "226 Closing data connection.");
+                if (S_ISDIR(st.st_mode)) {
+                    rc = ftp_vfs_opendir(&session->transfer.dir_vfs, session->temp_path.s);
+                    if (rc < 0) {
+                        ftp_client_msg(session, "450 Requested file action not taken. %s", strerror(errno));
                     } else {
-                        ftp_client_msg(session, "450 Requested file action not taken.");
+                        rc = ftp_data_open(session);
+                        if (rc < 0) {
+                            ftp_client_msg(session, "425 Can't open data connection. %s rc: %d", strerror(errno), errno);
+                        } else {
+                            session->transfer.mode = mode;
+                            return;
+                        }
+                        ftp_vfs_closedir(&session->transfer.dir_vfs);
                     }
+                } else if (!nlist) {
+                    const time_t cur_time = time(NULL);
+                    rc = ftp_build_list_entry(session, cur_time, &session->temp_path, pathname.s, &st, nlist);
+                    if (rc < 0) {
+                        ftp_client_msg(session, "450 Requested file action not taken. %s", strerror(errno));
+                    } else {
+                        rc = ftp_data_open(session);
+                        if (rc < 0) {
+                            ftp_client_msg(session, "425 Can't open data connection. %s", strerror(errno));
+                        } else {
+                            session->transfer.mode = mode;
+                            return;
+                        }
+                    }
+                } else {
+                    ftp_client_msg(session, "450 Requested file action not taken.");
                 }
-                ftp_data_transfer_end(session);
             }
         }
     }
@@ -1313,20 +1329,24 @@ static void ftp_session_progress_line(struct FtpSession* session, const char* li
             if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
                 ftp_client_msg(session, "530 Not logged in.");
             } else {
-                // const char* cmd_args = strchr(line + strlen(cmd->name), ' ');
-                const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
-                if (cmd_args) {
-                    if (cmd->args_required == FTP_ARGS_NONE) {
-                        ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
-                    } else {
-                        cmd->cmd_func(session, cmd_args + 1);
-                    }
+                // data transfers are async, but only abort cmd is allowed.
+                if (session->transfer.mode != FTP_TRANSFER_MODE_NONE && strcasecmp(cmd->name, "ABOR")) {
+                    ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
                 } else {
-                    if (cmd->args_required == FTP_ARGS_REQUIRED) {
-                        ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
-                    }
-                    else {
-                        cmd->cmd_func(session, "\0");
+                    const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
+                    if (cmd_args) {
+                        if (cmd->args_required == FTP_ARGS_NONE) {
+                            ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
+                        } else {
+                            cmd->cmd_func(session, cmd_args + 1);
+                        }
+                    } else {
+                        if (cmd->args_required == FTP_ARGS_REQUIRED) {
+                            ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
+                        }
+                        else {
+                            cmd->cmd_func(session, "\0");
+                        }
                     }
                 }
             }
@@ -1427,10 +1447,10 @@ int ftpsrv_loop(int timeout_ms) {
 
             if (session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
                 fds[sd].fd = session->data_sock;
-                if (session->transfer.mode == FTP_TRANSFER_MODE_RETR) {
-                    fds[sd].events = POLLOUT;
-                } else {
+                if (session->transfer.mode == FTP_TRANSFER_MODE_STOR) {
                     fds[sd].events = POLLIN;
+                } else {
+                    fds[sd].events = POLLOUT;
                 }
             }
         }
@@ -1501,10 +1521,10 @@ int ftpsrv_loop(int timeout_ms) {
         if (session->active) {
             FD_SET_HELPER(nfds, session->control_sock, &rfds);
             if (session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
-                if (session->transfer.mode == FTP_TRANSFER_MODE_RETR) {
-                    FD_SET_HELPER(nfds, session->data_sock, &wfds);
-                } else {
+                if (session->transfer.mode == FTP_TRANSFER_MODE_STOR) {
                     FD_SET_HELPER(nfds, session->data_sock, &rfds);
+                } else {
+                    FD_SET_HELPER(nfds, session->data_sock, &wfds);
                 }
             }
         }

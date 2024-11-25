@@ -1,5 +1,7 @@
-// Copyright 2024 TotalJustice.
-// SPDX-License-Identifier: MIT
+/**
+ * Copyright 2024 TotalJustice.
+ * SPDX-License-Identifier: MIT
+ */
 #ifndef FTP_SRV_H
 #define FTP_SRV_H
 

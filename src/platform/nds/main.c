@@ -85,7 +85,7 @@ int main(void) {
     // note: found no speed difference.
     // setCpuClock(true);
 
-    // we don't use sound (yet) or 3d engine.
+    // we don't use sound (yet).
     powerOff(PM_SOUND_AMP);
 	powerOn(PM_SOUND_MUTE);
     // we don't use the 3d engine.
@@ -152,17 +152,17 @@ int main(void) {
             has_net = false;
         }
 
+        scanKeys();
+        const u32 kdown = keysDown();
+        if (kdown & KEY_START) {
+            break;
+        }
+
         if (has_net) {
             poll_ftp();
         }
         else {
            swiWaitForVBlank();
-        }
-
-        scanKeys();
-        const u32 kdown = keysDown();
-        if (kdown & KEY_START) {
-            break;
         }
 	}
 

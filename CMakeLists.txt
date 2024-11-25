@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.13)
 project(ftpsrv
     LANGUAGES C
     VERSION 0.1.0
+    DESCRIPTION "small and fast ftp server"
 )
 
 # enable setting cmake options via set()
@@ -196,12 +197,23 @@ if (NINTENDO_SWITCH)
     target_link_libraries(sysftp PRIVATE ftpsrv_sysmod minIni)
 
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B/flags)
+
+    add_custom_command(
+        TARGET ftpexe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nx/toolbox.json
+            ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B/toolbox.json
+
+        COMMAND ${CMAKE_COMMAND} -E touch
+            ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B/flags/boot2.flag
+    )
 
     nx_create_exefs(sysftp
         OUTPUT 420000000000011B/exefs.nsp
-        CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/assets/sysftp.json
+        CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nx/sysftp.json
     )
-elseif(NDS)
+elseif(NINTENDO_DS)
     ftp_set_options(ftpsrv 769 16 1024*64)
     fetch_minini()
 
@@ -222,7 +234,7 @@ elseif(NDS)
         SUBTITLE1 "FTPS"
         SUBTITLE2 "TJ"
     )
-elseif(3DS)
+elseif(NINTENDO_3DS)
     ftp_set_options(ftpsrv 769 64 1024*64)
     fetch_minini()
 
@@ -238,8 +250,16 @@ elseif(3DS)
     target_link_libraries(ftpexe PRIVATE ftpsrv minIni)
     ftp_add(ftpexe)
 
-    ctr_create_3dsx(ftpexe)
-elseif(WII)
+    ctr_generate_smdh(${PROJECT_NAME}.smdh
+        NAME "${PROJECT_NAME}"
+        DESCRIPTION "v${PROJECT_VERSION}"
+        AUTHOR "TotalJustice"
+    )
+
+    ctr_create_3dsx(ftpexe
+        SMDH ${PROJECT_NAME}.smdh
+    )
+elseif(NINTENDO_WII)
     ftp_set_options(ftpsrv 769 10 1024*64)
     fetch_minini()
 
@@ -272,54 +292,6 @@ elseif(WII)
             ${CMAKE_CURRENT_BINARY_DIR}/ftpexe.dol
             ${CMAKE_CURRENT_BINARY_DIR}/apps/ftpsrv/boot.dol
     )
-elseif(WIIU)
-    target_compile_definitions(ftpsrv PRIVATE
-        FTP_PATHNAME_SIZE=769
-        FTP_PATHNAME_SSCANF="768"
-        FTP_MAX_SESSIONS=16
-        FTP_FILE_BUFFER_SIZE=1024*64
-    )
-
-    target_compile_definitions(ftpsrv PUBLIC
-        FTP_VFS_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/vfs_unistd.h"
-        FTP_SOCKET_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/socket_unistd.h"
-    )
-elseif(PSP)
-    target_compile_definitions(ftpsrv PRIVATE
-        FTP_PATHNAME_SIZE=769
-        FTP_PATHNAME_SSCANF="768"
-        FTP_MAX_SESSIONS=16
-        FTP_FILE_BUFFER_SIZE=1024*64
-    )
-
-    target_compile_definitions(ftpsrv PUBLIC
-        FTP_VFS_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/vfs_unistd.h"
-        FTP_SOCKET_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/socket_unistd.h"
-    )
-elseif(VITA)
-    target_compile_definitions(ftpsrv PRIVATE
-        FTP_PATHNAME_SIZE=769
-        FTP_PATHNAME_SSCANF="768"
-        FTP_MAX_SESSIONS=16
-        FTP_FILE_BUFFER_SIZE=1024*64
-    )
-
-    target_compile_definitions(ftpsrv PUBLIC
-        FTP_VFS_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/vfs_unistd.h"
-        FTP_SOCKET_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/socket_unistd.h"
-    )
-elseif(DREAMCAST)
-    target_compile_definitions(ftpsrv PRIVATE
-        FTP_PATHNAME_SIZE=769
-        FTP_PATHNAME_SSCANF="768"
-        FTP_MAX_SESSIONS=16
-        FTP_FILE_BUFFER_SIZE=1024*64
-    )
-
-    target_compile_definitions(ftpsrv PUBLIC
-        FTP_VFS_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/vfs_unistd.h"
-        FTP_SOCKET_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/socket_unistd.h"
-    )
 else()
     target_compile_definitions(ftpsrv PRIVATE
         FTP_FILE_BUFFER_SIZE=1024*512
@@ -333,6 +305,7 @@ else()
     add_executable(ftpexe
         src/platform/unistd/main.c
         src/platform/unistd/vfs_unistd.c
+        src/args/args.c
     )
     target_link_libraries(ftpexe PRIVATE ftpsrv)
     ftp_add(ftpexe)

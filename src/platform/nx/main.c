@@ -8,6 +8,8 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <switch/services/bsd.h>
 #include <switch.h>
@@ -101,7 +103,7 @@ static void consolePrint(const char* fmt, ...) {
     consoleUpdate(NULL);
 }
 
-static void error_loop(const char* msg) {
+static int error_loop(const char* msg) {
     printf("Error: %s\n\n", msg);
     printf("Modify the config at: %s\n\n", INI_PATH);
     printf("\tPress (+) to exit...\n");
@@ -115,6 +117,7 @@ static void error_loop(const char* msg) {
         }
         svcSleepThread(1e+9 / 60);
     }
+    return EXIT_FAILURE;
 }
 
 int main(int argc, char** argv) {
@@ -128,50 +131,67 @@ int main(int argc, char** argv) {
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
+    const bool mount_devices = ini_getl("Nx", "mount_devices", 1, INI_PATH);
 
-    char save_id_str[21] = {0};
-    ini_gets("Nx", "save_application_id", "", save_id_str, sizeof(save_id_str), INI_PATH);
+    if (mount_devices) {
+        char save_id_str[21] = {0};
+        ini_gets("Nx", "save_application_id", "", save_id_str, sizeof(save_id_str), INI_PATH);
 
-    char bcat_id_str[21] = {0};
-    ini_gets("Nx", "bcat_application_id", "", bcat_id_str, sizeof(bcat_id_str), INI_PATH);
+        char bcat_id_str[21] = {0};
+        ini_gets("Nx", "bcat_application_id", "", bcat_id_str, sizeof(bcat_id_str), INI_PATH);
 
-    const u64 save_id = strtoull(save_id_str, NULL, 16);
-    const u64 bcat_id = strtoull(bcat_id_str, NULL, 16);
+        const u64 save_id = strtoull(save_id_str, NULL, 16);
+        const u64 bcat_id = strtoull(bcat_id_str, NULL, 16);
 
-    if (R_SUCCEEDED(fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand))) {
-        add_device("image_nand");
-    }
-    if (R_SUCCEEDED(fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd))) {
-        add_device("image_sd");
-    }
-
-    AccountUid uid;
-    if (R_SUCCEEDED(accountTrySelectUserWithoutInteraction(&uid, false))) {
-        if (R_SUCCEEDED(fsdev_wrapMountSave("save", save_id, uid))) {
-            add_device("save");
+        if (R_SUCCEEDED(fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand))) {
+            add_device("image_nand");
         }
+        if (R_SUCCEEDED(fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd))) {
+            add_device("image_sd");
+        }
+
+        AccountUid uid;
+        if (R_SUCCEEDED(accountTrySelectUserWithoutInteraction(&uid, false))) {
+            if (R_SUCCEEDED(fsdev_wrapMountSave("save", save_id, uid))) {
+                add_device("save");
+            }
+        }
+
+        if (R_SUCCEEDED(fsdev_wrapMountSaveBcat("bcat", bcat_id))) {
+            add_device("bcat");
+        }
+
+        // add some shortcuts.
+        FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
+        if (sdmc) {
+            if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
+                add_device("switch");
+            }
+
+            if (!fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false)) {
+                add_device("contents");
+            }
+        }
+
+        g_ftpsrv_config.devices = g_devices;
+        g_ftpsrv_config.devices_count = g_devices_count;
     }
 
-    if (R_SUCCEEDED(fsdev_wrapMountSaveBcat("bcat", bcat_id))) {
-        add_device("bcat");
-    }
-
-    g_ftpsrv_config.devices = g_devices;
-    g_ftpsrv_config.devices_count = g_devices_count;
-
-    if (!user_len && !pass_len) {
-        g_ftpsrv_config.anon = true;
+    if (!user_len && !pass_len && !g_ftpsrv_config.anon) {
+        return error_loop("User / Pass / Anon not set in config!");
     }
 
     if (!g_ftpsrv_config.port) {
-        error_loop("Network: Invalid port");
-        return EXIT_FAILURE;
+        return error_loop("Network: Invalid port");
     }
 
     u32 ip;
-    nifmGetCurrentIpAddress(&ip);
+    if (R_FAILED(nifmGetCurrentIpAddress(&ip))) {
+        return error_loop("failed to get current ip address");
+    }
 
-    printf(TEXT_YELLOW "ip: %u.%u.%u.%u\n", ip&0xFF, (ip>>8)&0xFF, (ip>>16)&0xFF, (ip>>24)&0xFF);
+    const struct in_addr addr = {ip};
+    printf(TEXT_YELLOW "ip: %s\n", inet_ntoa(addr));
     printf(TEXT_YELLOW "port: %d" TEXT_NORMAL "\n", g_ftpsrv_config.port);
     if (g_ftpsrv_config.anon) {
         printf(TEXT_YELLOW "anon: %d" TEXT_NORMAL "\n", 1);
@@ -186,10 +206,10 @@ int main(int argc, char** argv) {
     mutexInit(&g_mutex);
     Thread thread;
     if (R_FAILED(threadCreate(&thread, ftp_thread, NULL, NULL, 1024*16, 0x31, 1))) {
-        fprintf(stderr, "threadCreate() failed:\n");
+        error_loop("threadCreate() failed");
     } else {
         if (R_FAILED(threadStart(&thread))) {
-            fprintf(stderr, "threadStart() failed:\n");
+            error_loop("threadStart() failed");
         } else {
             while (appletMainLoop()) {
                 padUpdate(&g_pad);

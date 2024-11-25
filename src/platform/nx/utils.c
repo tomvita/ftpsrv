@@ -1,5 +1,6 @@
 #include "utils.h"
 #include <string.h>
+#include <stdio.h>
 
 #define FsDevWrap_DEVICES_MAX 32
 
@@ -12,13 +13,15 @@ enum FsDevWrap_Error {
 struct FsDevWrapEntry {
     FsFileSystem fs;
     char path[32];
+    const char* shortcut;
     bool active;
+    bool own;
 };
 
 static struct FsDevWrapEntry g_fsdev_entries[FsDevWrap_DEVICES_MAX] = {0};
 
 static Result mount_helper(const char* path, FsFileSystem fs) {
-    if (fsdev_wrapMountDevice(path, fs)) {
+    if (fsdev_wrapMountDevice(path, NULL, fs, true)) {
         fsFsClose(&fs);
         return FsDevWrap_Error_FailedToMount;
     }
@@ -79,6 +82,25 @@ Result fsdev_wrapMountSaveBcat(const char* path, u64 id) {
     return rc;
 }
 
+FsFileSystem* fsdev_wrapGetDeviceFileSystem(const char* name) {
+    size_t len = strlen(name);
+    if (!len) {
+        return NULL;
+    }
+
+    const char* sdmc_path = "sdmc";
+    if (name[0] == '/') {
+        name = sdmc_path;
+    }
+
+    for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
+        if (g_fsdev_entries[i].active && !strncmp(name, g_fsdev_entries[i].path, strlen(name))) {
+            return &g_fsdev_entries[i].fs;
+        }
+    }
+    return NULL;
+}
+
 int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpath) {
     size_t len = strlen(path);
     if (!len) {
@@ -100,7 +122,12 @@ int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpa
     for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
         if (g_fsdev_entries[i].active && !strncmp(path, g_fsdev_entries[i].path, device_name_len)) {
             *device = &g_fsdev_entries[i].fs;
-            strcpy(outpath, colon + 1);
+            if (g_fsdev_entries[i].shortcut) {
+                sprintf(outpath, "/%s/%s", g_fsdev_entries[i].shortcut, colon + 1);
+            } else {
+                strcpy(outpath, colon + 1);
+            }
+
             if (outpath[0] == '\0') {
                 outpath[0] = '/';
                 outpath[1] = '\0';
@@ -112,11 +139,13 @@ int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpa
     return -1;
 }
 
-int fsdev_wrapMountDevice(const char *name, FsFileSystem fs) {
+int fsdev_wrapMountDevice(const char *name, const char* shortcut, FsFileSystem fs, bool own) {
     for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
         if (!g_fsdev_entries[i].active) {
-            g_fsdev_entries[i].active = 1;
+            g_fsdev_entries[i].active = true;
             g_fsdev_entries[i].fs = fs;
+            g_fsdev_entries[i].shortcut = shortcut;
+            g_fsdev_entries[i].own = own;
             strncpy(g_fsdev_entries[i].path, name, sizeof(g_fsdev_entries[i].path));
             return 0;
         }
@@ -128,8 +157,10 @@ int fsdev_wrapMountDevice(const char *name, FsFileSystem fs) {
 void fsdev_wrapUnmountAll(void) {
     for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
         if (!g_fsdev_entries[i].active) {
-            g_fsdev_entries[i].active = 0;
-            fsFsClose(&g_fsdev_entries[i].fs);
+            g_fsdev_entries[i].active = false;
+            if (g_fsdev_entries[i].own) {
+                fsFsClose(&g_fsdev_entries[i].fs);
+            }
         }
     }
 }

@@ -24,19 +24,36 @@ int main(void) {
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
+    const bool mount_devices = ini_getl("Nx", "mount_devices", 1, INI_PATH);
 
-    if (!user_len && !pass_len) {
-        g_ftpsrv_config.anon = true;
-    }
-    if (R_SUCCEEDED(fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand))) {
-        add_device("image_nand");
-    }
-    if (R_SUCCEEDED(fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd))) {
-        add_device("image_sd");
+    if (mount_devices) {
+        if (R_SUCCEEDED(fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand))) {
+            add_device("image_nand");
+        }
+        if (R_SUCCEEDED(fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd))) {
+            add_device("image_sd");
+        }
+
+        // add some shortcuts.
+        FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
+        if (sdmc) {
+            if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
+                add_device("switch");
+            }
+
+            if (!fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false)) {
+                add_device("contents");
+            }
+        }
+
+        g_ftpsrv_config.devices = g_devices;
+        g_ftpsrv_config.devices_count = g_devices_count;
     }
 
-    g_ftpsrv_config.devices = g_devices;
-    g_ftpsrv_config.devices_count = g_devices_count;
+    // exit early as this is a security risk due to ldn-mitm.
+    if (!user_len && !pass_len && !g_ftpsrv_config.anon) {
+        return EXIT_FAILURE;
+    }
 
     while (1) {
         ftpsrv_init(&g_ftpsrv_config);

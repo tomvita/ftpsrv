@@ -15,8 +15,9 @@ Result fsdev_wrapMountBis(const char* path, FsBisPartitionId id);
 Result fsdev_wrapMountSave(const char* path, u64 id, AccountUid uid);
 Result fsdev_wrapMountSaveBcat(const char* path, u64 id);
 
+FsFileSystem* fsdev_wrapGetDeviceFileSystem(const char* name);
 int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpath);
-int fsdev_wrapMountDevice(const char *name, FsFileSystem fs);
+int fsdev_wrapMountDevice(const char *name, const char* shortcut, FsFileSystem fs, bool own);
 void fsdev_wrapUnmountAll(void);
 
 #ifdef __cplusplus

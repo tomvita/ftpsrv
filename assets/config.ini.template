@@ -1,4 +1,10 @@
-# ftpsrv
+##########
+# ftpsrv #
+##########
+
+#######################################################################
+# Rename config.ini.template to config.ini for changes to take effect.#
+#######################################################################
 
 [Login]
 # disabled by default, do not enable if using ldn_mitm as
@@ -17,7 +23,7 @@ port = 21
 [Nx]
 # enables showing all available mount points at root "/"
 # for example, SdCard is as at "/sdmc:"
-mount_devices = 0
+mount_devices = 1
 
 # mounts the application save data, needs mount_devices = 1
 save_application_id = 0x0100F2C0115B6000
