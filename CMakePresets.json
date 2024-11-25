@@ -1,0 +1,201 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "core",
+            "displayName": "core",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "core-dev",
+            "displayName": "core-dev",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "nds",
+            "displayName": "nds",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{DEVKITPRO}/cmake/NDS.cmake",
+            "cacheVariables": {
+                "NDS": true
+            }
+        },
+        {
+            "name": "3ds",
+            "displayName": "3ds",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{DEVKITPRO}/cmake/3DS.cmake",
+            "cacheVariables": {
+                "3DS": true
+            }
+        },
+        {
+            "name": "wii",
+            "displayName": "wii",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{DEVKITPRO}/cmake/Wii.cmake",
+            "cacheVariables": {
+                "WII": true
+            }
+        },
+        {
+            "name": "wiiu",
+            "displayName": "wiiu",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{DEVKITPRO}/cmake/WiiU.cmake",
+            "cacheVariables": {
+                "WIIU": true
+            }
+        },
+        {
+            "name": "switch",
+            "displayName": "switch",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{DEVKITPRO}/cmake/Switch.cmake",
+            "cacheVariables": {
+                "SWITCH": true
+            }
+        },
+        {
+            "name": "dreamcast",
+            "displayName": "dreamcast",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{KOS_CMAKE_TOOLCHAIN}",
+            "cacheVariables": {
+                "DREAMCAST": true
+            }
+        },
+        {
+            "name": "ps2",
+            "displayName": "ps2",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{PS2DEV}/share/ps2dev.cmake",
+            "cacheVariables": {
+                "PS2": true
+            }
+        },
+        {
+            "name": "ps4",
+            "displayName": "ps4",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{OO_PS4_TOOLCHAIN}/cmake/ps4.cmake",
+            "cacheVariables": {
+                "PS4": true
+            }
+        },
+        {
+            "name": "psp",
+            "displayName": "psp",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{PSPDEV}/psp/share/pspdev.cmake",
+            "cacheVariables": {
+                "PSP": true
+            }
+        },
+        {
+            "name": "vita",
+            "displayName": "vita",
+            "inherits": [ "core" ],
+            "toolchainFile": "$env{VITASDK}/share/vita.toolchain.cmake",
+            "cacheVariables": {
+                "VITA": true
+            }
+        },
+        {
+            "name": "xbox",
+            "displayName": "xbox",
+            "inherits": [ "core" ],
+            "toolchainFile": "${sourceDir}/cmake/toolchain/nxdk.cmake",
+            "cacheVariables": {
+                "XBOX": true
+            }
+        },
+        {
+            "name": "xbox360",
+            "displayName": "xbox360",
+            "inherits": [ "core" ],
+            "toolchainFile": "${sourceDir}/cmake/toolchain/xenon.cmake",
+            "cacheVariables": {
+                "XBOX360": true
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "core",
+            "configurePreset": "core",
+            "jobs": 16
+        },
+        {
+            "name": "core-dev",
+            "configurePreset": "core-dev",
+            "jobs": 16
+        },
+        {
+            "name": "nds",
+            "configurePreset": "nds",
+            "jobs": 16
+        },
+        {
+            "name": "3ds",
+            "configurePreset": "3ds",
+            "jobs": 16
+        },
+        {
+            "name": "wii",
+            "configurePreset": "wii",
+            "jobs": 16
+        },
+        {
+            "name": "wiiu",
+            "configurePreset": "wiiu",
+            "jobs": 16
+        },
+        {
+            "name": "switch",
+            "configurePreset": "switch",
+            "jobs": 16
+        },
+        {
+            "name": "dreamcast",
+            "configurePreset": "dreamcast",
+            "jobs": 16
+        },
+        {
+            "name": "ps2",
+            "configurePreset": "ps2",
+            "jobs": 16
+        },
+        {
+            "name": "ps3",
+            "configurePreset": "ps3",
+            "jobs": 16
+        },
+        {
+            "name": "ps4",
+            "configurePreset": "ps4",
+            "jobs": 16
+        },
+        {
+            "name": "psp",
+            "configurePreset": "psp",
+            "jobs": 16
+        },
+        {
+            "name": "vita",
+            "configurePreset": "vita",
+            "jobs": 16
+        }
+    ]
+}

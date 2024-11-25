@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<app version="1">
+  <name>Ftpsrv</name>
+  <coder>TotalJustice</coder>
+  <version>0.1.0</version>
+  <short_description>FTP server</short_description>
+</app>
