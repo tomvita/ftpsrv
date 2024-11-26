@@ -39,17 +39,6 @@ static struct CallbackData* g_callback_data = NULL;
 static u32 g_num_events = 0;
 static volatile bool g_should_exit = false;
 
-static s32 wii_netcallback(s32 result, void *usrdata) {
-    if (result < 0) {
-        g_net_init = false;
-        iprintf("failed to do wii init\n");
-    }
-    else {
-        g_net_init = true;
-        iprintf("did wii init\n");
-    }
-}
-
 static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
     LWP_MutexLock(g_mutex);
         g_num_events++;
