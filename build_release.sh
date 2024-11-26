@@ -54,11 +54,11 @@ mkdir -p out/switch/switch
 cp assets/config.ini.template out/switch/config/ftpsrv/
 cp -r build/switch/*.nro out/switch/switch/ftpsrv.nro
 cd out/switch
-zip -r9 ../switch.zip switch config
+zip -r9 ../switch_application.zip switch config
 cd ../..
 
 mkdir -p out/switch/atmosphere/contents/
 cp -r build/switch/420000000000011B out/switch/atmosphere/contents/
 cd out/switch
-zip -r9 ../switch.zip atmosphere config
+zip -r9 ../switch_sysmod.zip atmosphere config
 cd ../..
