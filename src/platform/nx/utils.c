@@ -121,7 +121,9 @@ int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpa
 
     for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
         if (g_fsdev_entries[i].active && !strncmp(path, g_fsdev_entries[i].path, device_name_len)) {
-            *device = &g_fsdev_entries[i].fs;
+            if (device) {
+                *device = &g_fsdev_entries[i].fs;
+            }
             if (g_fsdev_entries[i].shortcut) {
                 sprintf(outpath, "/%s/%s", g_fsdev_entries[i].shortcut, colon + 1);
             } else {
