@@ -126,7 +126,7 @@ int main(void) {
     gfxInitDefault();
 	consoleInit(GFX_TOP, &topScreen);
 	consoleInit(GFX_BOTTOM, &bottomScreen);
-    consolePrint("\n[ftpsrv 0.1.0 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.1.1 By TotalJustice]\n\n");
 
     g_ftpsrv_config.log_callback = ftp_log_callback;
     g_ftpsrv_config.anon = ini_getl("Login", "anon", 0, INI_PATH);

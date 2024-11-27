@@ -1180,7 +1180,7 @@ static void ftp_cmd_STAT(struct FtpSession* session, const char* data) {
 
 // HELP <CRLF> | 211, 214, 500, 501, 502, 421
 static void ftp_cmd_HELP(struct FtpSession* session, const char* data) {
-    ftp_client_msg(session, "214 ftpsrv 0.1.0 By TotalJustice.");
+    ftp_client_msg(session, "214 ftpsrv 0.1.1 By TotalJustice.");
 }
 
 // NOOP <CRLF> | 200, 500, 421

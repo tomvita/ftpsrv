@@ -121,7 +121,7 @@ static int error_loop(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    consolePrint("\n[ftpsrv 0.1.0 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.1.1 By TotalJustice]\n\n");
 
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
