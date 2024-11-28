@@ -293,7 +293,8 @@ static int build_fullpath(const struct FtpSession* session, struct Pathname* out
     }
 
     // return an error if the output was truncated or it failed.
-    if (rc < 0 || rc > sizeof(*out)) {
+    if (rc < 0 || rc >= sizeof(*out)) {
+        errno = ENAMETOOLONG;
         rc = -1;
     } else {
         rc = 0;
@@ -323,7 +324,6 @@ static inline struct Pathname fix_path_for_device(const struct Pathname* path) {
 static int ftp_build_list_entry(struct FtpSession* session, const time_t cur_time, const struct Pathname* fullpath, const char* name, const struct stat* st, int nlist) {
     int rc;
     struct FtpTransfer* transfer = &session->transfer;
-    // char buf[1024 * 4] = {0};
 
     if (nlist) {
         rc = snprintf(transfer->list_buf, sizeof(transfer->list_buf), "%s" TELNET_EOL, name);
@@ -393,6 +393,7 @@ static int ftp_build_list_entry(struct FtpSession* session, const time_t cur_tim
 
     if (rc <= 0 || rc > sizeof(transfer->list_buf)) {
         // don't send anything on error or truncated
+        errno = ENAMETOOLONG;
         rc = -1;
     } else {
         transfer->size = rc;
@@ -490,6 +491,7 @@ static void ftp_dir_data_transfer_progress(struct FtpSession* session) {
     const time_t cur_time = time(NULL);
     const bool nlist = session->transfer.mode == FTP_TRANSFER_MODE_NLST;
     const bool device_list = g_ftp.cfg.devices && g_ftp.cfg.devices_count && !strcmp("/", session->temp_path.s);
+    const bool is_root = !strcmp("/", session->temp_path.s);
     struct FtpTransfer* transfer = &session->transfer;
 
     // send as much data as possible.
@@ -543,8 +545,14 @@ static void ftp_dir_data_transfer_progress(struct FtpSession* session) {
                     continue;
                 }
 
-                static struct Pathname filepath;
-                int rc = snprintf(filepath.s, sizeof(filepath), "%s/%s", session->temp_path.s, name);
+                int rc;
+                struct Pathname filepath;
+                if (is_root) {
+                    rc = snprintf(filepath.s, sizeof(filepath), "%s%s", session->temp_path.s, name);
+                } else {
+                    rc = snprintf(filepath.s, sizeof(filepath), "%s/%s", session->temp_path.s, name);
+                }
+
                 if (rc <= 0 || rc > sizeof(filepath)) {
                     continue;
                 }
@@ -1115,7 +1123,7 @@ static void ftp_list_directory(struct FtpSession* session, const char* data, int
             struct stat st = {0};
             rc = ftp_vfs_lstat(session->temp_path.s, &st);
             if (rc < 0) {
-                ftp_client_msg(session, "450 Requested file action not taken. %s %s", strerror(errno), session->temp_path.s);
+                ftp_client_msg(session, "450 Requested file action not taken. %s", strerror(errno));
             } else {
                 if (S_ISDIR(st.st_mode)) {
                     rc = ftp_vfs_opendir(&session->transfer.dir_vfs, session->temp_path.s);
@@ -1124,7 +1132,7 @@ static void ftp_list_directory(struct FtpSession* session, const char* data, int
                     } else {
                         rc = ftp_data_open(session);
                         if (rc < 0) {
-                            ftp_client_msg(session, "425 Can't open data connection. %s rc: %d", strerror(errno), errno);
+                            ftp_client_msg(session, "425 Can't open data connection. %s", strerror(errno));
                         } else {
                             session->transfer.mode = mode;
                             return;
@@ -1180,7 +1188,7 @@ static void ftp_cmd_STAT(struct FtpSession* session, const char* data) {
 
 // HELP <CRLF> | 211, 214, 500, 501, 502, 421
 static void ftp_cmd_HELP(struct FtpSession* session, const char* data) {
-    ftp_client_msg(session, "214 ftpsrv 0.1.1 By TotalJustice.");
+    ftp_client_msg(session, "214 ftpsrv 0.1.2 By TotalJustice.");
 }
 
 // NOOP <CRLF> | 200, 500, 421

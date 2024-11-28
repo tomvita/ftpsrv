@@ -15,11 +15,11 @@
 #include <switch.h>
 #include <minIni.h>
 
-#define TEXT_NORMAL "\033[0m"
-#define TEXT_RED "\033[0;31m"
-#define TEXT_GREEN "\033[0;32m"
-#define TEXT_YELLOW "\033[0;33m"
-#define TEXT_BLUE "\033[0;34m"
+#define TEXT_NORMAL "\033[37;1m"
+#define TEXT_RED "\033[31;1m"
+#define TEXT_GREEN "\033[32;1m"
+#define TEXT_YELLOW "\033[33;1m"
+#define TEXT_BLUE "\033[34;1m"
 
 struct CallbackData {
     enum FTP_API_LOG_TYPE type;
@@ -28,7 +28,7 @@ struct CallbackData {
 
 static const char INI_PATH[FS_MAX_PATH] = {"/config/ftpsrv/config.ini"};
 static struct FtpSrvConfig g_ftpsrv_config = {0};
-static struct FtpSrvDevice g_devices[32] = {0};
+static struct FtpSrvDevice g_devices[FsDevWrap_DEVICES_MAX] = {0};
 static int g_devices_count;
 
 static PadState g_pad;
@@ -43,7 +43,7 @@ static bool IsApplication(void) {
 }
 
 static void add_device(const char* path) {
-    if (g_devices_count < 32) {
+    if (g_devices_count < FsDevWrap_DEVICES_MAX) {
         sprintf(g_devices[g_devices_count++].mount, "%s:", path);
     }
 }
@@ -121,7 +121,7 @@ static int error_loop(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    consolePrint("\n[ftpsrv 0.1.1 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.1.2 By TotalJustice]\n\n");
 
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
@@ -199,6 +199,7 @@ int main(int argc, char** argv) {
         printf(TEXT_YELLOW "user: %s" TEXT_NORMAL "\n", g_ftpsrv_config.user);
         printf(TEXT_YELLOW "pass: %s" TEXT_NORMAL "\n", g_ftpsrv_config.pass);
     }
+    printf(TEXT_YELLOW "mount_devices: %d" TEXT_NORMAL "\n", mount_devices);
     printf(TEXT_YELLOW "\nconfig: %s" TEXT_NORMAL "\n", INI_PATH);
     printf("\n");
     consoleUpdate(NULL);
@@ -318,16 +319,18 @@ void userAppInit(void) {
     if (R_FAILED(rc = fsdev_wrapMountSdmc()))
         diagAbortWithResult(rc);
 
+    appletRequestToAcquireSleepLock();
     add_device("sdmc");
     consoleInit(NULL);
 }
 
 void userAppExit(void) {
+    consoleExit(NULL);
     accountExit();
     socketExit();
     bsdExit();
     nifmExit();
-    consoleExit(NULL);
     fsdev_wrapUnmountAll();
+    appletReleaseSleepLock();
     appletUnlockExit();
 }

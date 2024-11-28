@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.13)
 
 project(ftpsrv
     LANGUAGES C
-    VERSION 0.1.1
+    VERSION 0.1.2
     DESCRIPTION "small and fast ftp server"
 )
 

@@ -8,11 +8,11 @@
 
 static const char* INI_PATH = "/config/ftpsrv/config.ini";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
-static struct FtpSrvDevice g_devices[32] = {0};
+static struct FtpSrvDevice g_devices[FsDevWrap_DEVICES_MAX] = {0};
 static int g_devices_count = 0;
 
 static void add_device(const char* path) {
-    if (g_devices_count < 32) {
+    if (g_devices_count < FsDevWrap_DEVICES_MAX) {
         sprintf(g_devices[g_devices_count++].mount, "%s:", path);
     }
 }

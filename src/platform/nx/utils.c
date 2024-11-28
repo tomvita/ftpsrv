@@ -1,8 +1,7 @@
 #include "utils.h"
 #include <string.h>
 #include <stdio.h>
-
-#define FsDevWrap_DEVICES_MAX 32
+#include <errno.h>
 
 #define FsDevWrap_Module 0x505
 
@@ -12,13 +11,24 @@ enum FsDevWrap_Error {
 
 struct FsDevWrapEntry {
     FsFileSystem fs;
-    char path[32];
+    char path[FsDevWrap_PATH_MAX];
     const char* shortcut;
     bool active;
     bool own;
 };
 
 static struct FsDevWrapEntry g_fsdev_entries[FsDevWrap_DEVICES_MAX] = {0};
+
+static struct FsDevWrapEntry* find_entry(const char* path) {
+    for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
+        const size_t dev_len = strlen(g_fsdev_entries[i].path);
+        if (g_fsdev_entries[i].active && !strncmp(g_fsdev_entries[i].path, path, dev_len) && (path[dev_len] == '\0' || path[dev_len] == ':')) {
+            return &g_fsdev_entries[i];
+        }
+    }
+
+    return NULL;
+}
 
 static Result mount_helper(const char* path, FsFileSystem fs) {
     if (fsdev_wrapMountDevice(path, NULL, fs, true)) {
@@ -83,65 +93,80 @@ Result fsdev_wrapMountSaveBcat(const char* path, u64 id) {
 }
 
 FsFileSystem* fsdev_wrapGetDeviceFileSystem(const char* name) {
-    size_t len = strlen(name);
-    if (!len) {
+    struct FsDevWrapEntry* entry = find_entry(name);
+    if (!entry) {
+        errno = ENODEV;
         return NULL;
     }
-
-    const char* sdmc_path = "sdmc";
-    if (name[0] == '/') {
-        name = sdmc_path;
-    }
-
-    for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
-        if (g_fsdev_entries[i].active && !strncmp(name, g_fsdev_entries[i].path, strlen(name))) {
-            return &g_fsdev_entries[i].fs;
-        }
-    }
-    return NULL;
+    return &entry->fs;
 }
 
 int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpath) {
-    size_t len = strlen(path);
-    if (!len) {
+    int rc = 0;
+    char nxpath[FS_MAX_PATH];
+
+    if (!path) {
+        errno = ENODEV;
         return -1;
     }
 
-    const char* sdmc_path = "sdmc:/";
     if (path[0] == '/') {
-        path = sdmc_path;
+        if (strchr(path, ':')) {
+            strcpy(nxpath, path + 1);
+        } else {
+            rc = snprintf(nxpath, sizeof(nxpath), "%s%s", "sdmc:", path);
+            if (rc <= 0 || rc >= sizeof(nxpath)) {
+                errno = ENAMETOOLONG;
+                return -1;
+            }
+        }
+    } else {
+        strcpy(nxpath, path);
     }
 
-    const char* colon = memchr(path, ':', len);
-    if (!colon || colon == path) {
+    const char* colon = strchr(nxpath, ':');
+    if (!colon) {
+        errno = ENODEV;
         return -1;
     }
 
-    const size_t device_name_len = colon - path;
+    struct FsDevWrapEntry* entry = find_entry(nxpath);
+    if (!entry) {
+        errno = ENODEV;
+        return -1;
+    }
 
-    for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
-        if (g_fsdev_entries[i].active && !strncmp(path, g_fsdev_entries[i].path, device_name_len)) {
-            if (device) {
-                *device = &g_fsdev_entries[i].fs;
-            }
-            if (g_fsdev_entries[i].shortcut) {
-                sprintf(outpath, "/%s/%s", g_fsdev_entries[i].shortcut, colon + 1);
-            } else {
-                strcpy(outpath, colon + 1);
-            }
+    if (device) {
+        *device = &entry->fs;
+    }
 
-            if (outpath[0] == '\0') {
-                outpath[0] = '/';
-                outpath[1] = '\0';
+    if (outpath) {
+        if (entry->shortcut) {
+            rc = snprintf(outpath, FS_MAX_PATH, "/%s/%s", entry->shortcut, colon + 1);
+            if (rc <= 0 || rc >= FS_MAX_PATH) {
+                errno = ENAMETOOLONG;
+                return -1;
             }
-            return 0;
+        } else {
+            strcpy(outpath, colon + 1);
+        }
+
+        if (outpath[0] == '\0') {
+            outpath[0] = '/';
+            outpath[1] = '\0';
         }
     }
 
-    return -1;
+    return 0;
 }
 
 int fsdev_wrapMountDevice(const char *name, const char* shortcut, FsFileSystem fs, bool own) {
+    const size_t name_len = strlen(name);
+    if (name_len <= 1 || name_len + 1 >= FsDevWrap_PATH_MAX) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
     for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {
         if (!g_fsdev_entries[i].active) {
             g_fsdev_entries[i].active = true;

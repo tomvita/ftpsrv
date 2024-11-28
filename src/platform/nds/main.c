@@ -101,7 +101,7 @@ int main(void) {
 	consoleInit(&topScreen, 3,BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
 	consoleInit(&bottomScreen, 3,BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
-    consolePrint("\n[ftpsrv 0.1.1 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.1.2 By TotalJustice]\n\n");
 
     // init sd card.
     if (!fatInitDefault()) {

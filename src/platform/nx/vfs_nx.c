@@ -674,9 +674,16 @@ int ftp_vfs_rmdir(const char* path) {
 
 int ftp_vfs_rename(const char* src, const char* dst) {
     FsFileSystem* fs = NULL;
+    FsFileSystem* fs_dst = NULL;
     char nxpath_src[FS_MAX_PATH];
     char nxpath_dst[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(src, &fs, nxpath_src) || fsdev_wrapTranslatePath(dst, NULL, nxpath_dst)) {
+    if (fsdev_wrapTranslatePath(src, &fs, nxpath_src) || fsdev_wrapTranslatePath(dst, &fs_dst, nxpath_dst)) {
+        return -1;
+    }
+
+    // cannot rename across different fs.
+    if (fs != fs_dst) {
+        errno = EXDEV; // this will do for the error.
         return -1;
     }
 

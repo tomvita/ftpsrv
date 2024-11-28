@@ -157,7 +157,7 @@ int main(void) {
 	VIDEO_WaitVSync();
 	if(rmode->viTVMode&VI_NON_INTERLACE) VIDEO_WaitVSync();
 
-    consolePrint("\n[ftpsrv 0.1.1 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.1.2 By TotalJustice]\n\n");
 
     if (!fatInitDefault()) {
         return error_loop("failed to init fat device\n");

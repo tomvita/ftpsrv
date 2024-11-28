@@ -1,6 +1,6 @@
 {
 	"name":	"sys-ftp",
-	"version":	"0.1.1",
+	"version":	"0.1.2",
 	"program_id": "0x420000000000011B",
 	"program_id_range_min": "0x420000000000011B",
 	"program_id_range_max": "0x420000000000011B",
