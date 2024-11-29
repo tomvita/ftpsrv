@@ -4,6 +4,8 @@
  */
 #include <ftpsrv.h>
 #include "utils.h"
+#include "log/log.h"
+
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -26,13 +28,15 @@ struct CallbackData {
     char msg[1024];
 };
 
-static const char INI_PATH[FS_MAX_PATH] = {"/config/ftpsrv/config.ini"};
+static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 static struct FtpSrvDevice g_devices[FsDevWrap_DEVICES_MAX] = {0};
-static int g_devices_count;
+static int g_devices_count = 0;
+static bool g_led_enabled = false;
 
-static PadState g_pad;
-static Mutex g_mutex;
+static PadState g_pad = {0};
+static Mutex g_mutex = {0};
 static struct CallbackData* g_callback_data = NULL;
 static u32 g_num_events = 0;
 static volatile bool g_should_exit = false;
@@ -49,6 +53,10 @@ static void add_device(const char* path) {
 }
 
 static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
+    if (g_led_enabled) {
+        led_flash();
+    }
+
     mutexLock(&g_mutex);
         g_num_events++;
         g_callback_data = realloc(g_callback_data, g_num_events * sizeof(*g_callback_data));
@@ -61,6 +69,8 @@ static void processEvents(void) {
     mutexLock(&g_mutex);
     if (g_num_events) {
         for (int i = 0; i < g_num_events; i++) {
+            log_file_write(g_callback_data[i].msg);
+
             switch (g_callback_data[i].type) {
                 case FTP_API_LOG_TYPE_COMMAND:
                     printf(TEXT_BLUE "Command:  %s" TEXT_NORMAL "\n", g_callback_data[i].msg);
@@ -104,6 +114,7 @@ static void consolePrint(const char* fmt, ...) {
 }
 
 static int error_loop(const char* msg) {
+    log_file_write(msg);
     printf("Error: %s\n\n", msg);
     printf("Modify the config at: %s\n\n", INI_PATH);
     printf("\tPress (+) to exit...\n");
@@ -121,17 +132,23 @@ static int error_loop(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    consolePrint("\n[ftpsrv 0.1.2 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.2.0-v1 By TotalJustice]\n\n");
 
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
 
     g_ftpsrv_config.log_callback = ftp_log_callback;
-    g_ftpsrv_config.anon = ini_getl("Login", "anon", 0, INI_PATH);
+    g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
-    const bool mount_devices = ini_getl("Nx", "mount_devices", 1, INI_PATH);
+    const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
+    const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
+    g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
+
+    if (log_enabled) {
+        log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - NX-app");
+    }
 
     if (mount_devices) {
         char save_id_str[21] = {0};
@@ -199,8 +216,12 @@ int main(int argc, char** argv) {
         printf(TEXT_YELLOW "user: %s" TEXT_NORMAL "\n", g_ftpsrv_config.user);
         printf(TEXT_YELLOW "pass: %s" TEXT_NORMAL "\n", g_ftpsrv_config.pass);
     }
+    printf(TEXT_YELLOW "log: %d" TEXT_NORMAL "\n", log_enabled);
     printf(TEXT_YELLOW "mount_devices: %d" TEXT_NORMAL "\n", mount_devices);
     printf(TEXT_YELLOW "\nconfig: %s" TEXT_NORMAL "\n", INI_PATH);
+    if (appletGetAppletType() == AppletType_LibraryApplet || appletGetAppletType() == AppletType_SystemApplet) {
+        printf(TEXT_RED "\napplet_mode: %u" TEXT_NORMAL "\n", 1);
+    }
     printf("\n");
     consoleUpdate(NULL);
 
@@ -319,13 +340,18 @@ void userAppInit(void) {
     if (R_FAILED(rc = fsdev_wrapMountSdmc()))
         diagAbortWithResult(rc);
 
+
+    // the below doesnt matter if they fail to init.
+    hidsysInitialize();
     appletRequestToAcquireSleepLock();
-    add_device("sdmc");
     consoleInit(NULL);
+
+    add_device("sdmc");
 }
 
 void userAppExit(void) {
     consoleExit(NULL);
+    hidsysExit();
     accountExit();
     socketExit();
     bsdExit();

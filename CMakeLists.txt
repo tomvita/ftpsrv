@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.13)
 
 project(ftpsrv
     LANGUAGES C
-    VERSION 0.1.2
+    VERSION 0.2.0
     DESCRIPTION "small and fast ftp server"
 )
 
@@ -148,7 +148,7 @@ ftp_add(ftpsrv)
 ftp_set_compile_definitions(ftpsrv)
 
 if (NINTENDO_SWITCH)
-    ftp_set_options(ftpsrv 769 256 1024*64)
+    ftp_set_options(ftpsrv 769 128 1024*64)
     fetch_minini()
 
     target_compile_definitions(ftpsrv PUBLIC
@@ -161,6 +161,7 @@ if (NINTENDO_SWITCH)
         src/platform/nx/main.c
         src/platform/nx/vfs_nx.c
         src/platform/nx/utils.c
+        src/log/log.c
     )
     ftp_add(ftpexe)
     target_link_libraries(ftpexe PRIVATE ftpsrv minIni)
@@ -192,6 +193,7 @@ if (NINTENDO_SWITCH)
         src/platform/nx/main_sysmod.c
         src/platform/nx/vfs_nx.c
         src/platform/nx/utils.c
+        src/log/log.c
     )
     ftp_add(sysftp)
     target_link_libraries(sysftp PRIVATE ftpsrv_sysmod minIni)
@@ -225,6 +227,7 @@ elseif(NINTENDO_DS)
     add_executable(ftpexe
         src/platform/nds/main.c
         src/platform/unistd/vfs_unistd.c
+        src/log/log.c
     )
     target_link_libraries(ftpexe PRIVATE ftpsrv minIni fat dswifi9)
     ftp_add(ftpexe)
@@ -246,6 +249,7 @@ elseif(NINTENDO_3DS)
     add_executable(ftpexe
         src/platform/3ds/main.c
         src/platform/unistd/vfs_unistd.c
+        src/log/log.c
     )
     target_link_libraries(ftpexe PRIVATE ftpsrv minIni)
     ftp_add(ftpexe)
@@ -271,6 +275,7 @@ elseif(NINTENDO_WII)
     add_executable(ftpexe
         src/platform/wii/main.c
         src/platform/unistd/vfs_unistd.c
+        src/log/log.c
     )
     target_link_libraries(ftpexe PRIVATE ftpsrv fat minIni)
     ftp_add(ftpexe)

@@ -23,6 +23,8 @@ int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpa
 int fsdev_wrapMountDevice(const char *name, const char* shortcut, FsFileSystem fs, bool own);
 void fsdev_wrapUnmountAll(void);
 
+void led_flash(void);
+
 #ifdef __cplusplus
 }
 #endif

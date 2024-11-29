@@ -25,6 +25,7 @@ struct FtpSrvDevice {
 };
 
 typedef void (*FtpSrvLogCallback)(enum FTP_API_LOG_TYPE, const char*);
+typedef void (*FtpSrvDebugLogCallback)(const char*, ...);
 
 struct FtpSrvConfig {
     char user[128];
@@ -42,6 +43,7 @@ struct FtpSrvConfig {
     unsigned devices_count;
 
     FtpSrvLogCallback log_callback;
+    FtpSrvDebugLogCallback debug_callback;
 };
 
 int ftpsrv_init(const struct FtpSrvConfig* cfg);

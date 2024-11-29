@@ -1,5 +1,6 @@
 #include "ftpsrv.h"
 #include "utils.h"
+#include "log/log.h"
 
 #include <string.h>
 #include <switch.h>
@@ -7,9 +8,18 @@
 #include <minIni.h>
 
 static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 static struct FtpSrvDevice g_devices[FsDevWrap_DEVICES_MAX] = {0};
 static int g_devices_count = 0;
+static bool g_led_enabled = false;
+
+static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
+    log_file_write(msg);
+    if (g_led_enabled) {
+        led_flash();
+    }
+}
 
 static void add_device(const char* path) {
     if (g_devices_count < FsDevWrap_DEVICES_MAX) {
@@ -20,11 +30,18 @@ static void add_device(const char* path) {
 int main(void) {
     memset(&g_ftpsrv_config, 0, sizeof(g_ftpsrv_config));
 
-    g_ftpsrv_config.anon = ini_getl("Login", "anon", 0, INI_PATH);
+    g_ftpsrv_config.log_callback = ftp_log_callback;
+    g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
-    const bool mount_devices = ini_getl("Nx", "mount_devices", 1, INI_PATH);
+    const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
+    const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
+    g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
+
+    if (log_enabled) {
+        log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - NX-sys");
+    }
 
     if (mount_devices) {
         if (R_SUCCEEDED(fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand))) {
@@ -52,6 +69,7 @@ int main(void) {
 
     // exit early as this is a security risk due to ldn-mitm.
     if (!user_len && !pass_len && !g_ftpsrv_config.anon) {
+        log_file_write("User / Pass / Anon not set in config!");
         return EXIT_FAILURE;
     }
 
@@ -175,6 +193,7 @@ void __appInit(void) {
     if (R_FAILED(rc = socketInitialize(&socket_config)))
         diagAbortWithResult(rc);
 
+    hidsysInitialize();
     __libnx_init_time();
     smExit(); // Close SM as we don't need it anymore.
 
@@ -183,6 +202,8 @@ void __appInit(void) {
 
 // Service deinitialization.
 void __appExit(void) {
+    log_file_exit();
+    hidsysExit();
     socketExit();
     bsdExit();
     fsdev_wrapUnmountAll();

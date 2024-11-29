@@ -191,3 +191,23 @@ void fsdev_wrapUnmountAll(void) {
         }
     }
 }
+
+void led_flash(void) {
+    static const HidsysNotificationLedPattern pattern = {
+        .baseMiniCycleDuration = 0x1,             // 12.5ms.
+        .totalMiniCycles = 0x1,                   // 1 mini cycle(s).
+        .totalFullCycles = 0x1,                   // 1 full run(s).
+        .startIntensity = 0xF,                    // 100%.
+        .miniCycles[0].ledIntensity = 0xF,        // 100%.
+        .miniCycles[0].transitionSteps = 0x1,     // 1 step(s). Total 12.5ms.
+        .miniCycles[0].finalStepDuration = 0x0,   // Forced 12.5ms.
+    };
+
+    s32 total;
+    HidsysUniquePadId unique_pad_ids[16] = {0};
+    if (R_SUCCEEDED(hidsysGetUniquePadIds(unique_pad_ids, 16, &total))) {
+        for (int i = 0; i < total; i++) {
+            hidsysSetNotificationLedPattern(&pattern, unique_pad_ids[i]);
+        }
+    }
+}

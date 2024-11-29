@@ -10,6 +10,7 @@
 
 #include <ftpsrv.h>
 #include <minIni.h>
+#include "log/log.h"
 
 #define SOC_ALIGN       0x1000
 #define SOC_BUFFERSIZE  (1024*1024*64)
@@ -27,6 +28,7 @@ struct CallbackData {
 };
 
 static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 
 static Handle g_mutex;
@@ -57,6 +59,8 @@ static void processEvents(void) {
     consoleSelect(&bottomScreen);
     if (g_num_events) {
         for (int i = 0; i < g_num_events; i++) {
+            log_file_write(g_callback_data[i].msg);
+
             switch (g_callback_data[i].type) {
                 case FTP_API_LOG_TYPE_COMMAND:
                     iprintf(TEXT_BLUE "Command:  %s" TEXT_NORMAL "\n", g_callback_data[i].msg);
@@ -102,6 +106,7 @@ static void consolePrint(const char* fmt, ...) {
 
 static int error_loop(const char* msg) {
     consoleSelect(&topScreen);
+    log_file_write(msg);
     iprintf("Error: %s\n\n", msg);
     iprintf("Modify the config at: %s\n\n", INI_PATH);
     iprintf("\tPress (+) to exit...\n");
@@ -126,13 +131,18 @@ int main(void) {
     gfxInitDefault();
 	consoleInit(GFX_TOP, &topScreen);
 	consoleInit(GFX_BOTTOM, &bottomScreen);
-    consolePrint("\n[ftpsrv 0.1.2 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.2.0 By TotalJustice]\n\n");
 
     g_ftpsrv_config.log_callback = ftp_log_callback;
-    g_ftpsrv_config.anon = ini_getl("Login", "anon", 0, INI_PATH);
+    g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
+    const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
+
+    if (log_enabled) {
+        log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - 3DS");
+    }
 
     if (!user_len && !pass_len) {
         g_ftpsrv_config.anon = true;
@@ -161,6 +171,7 @@ int main(void) {
         iprintf(TEXT_YELLOW "user: %s" TEXT_NORMAL "\n", g_ftpsrv_config.user);
         iprintf(TEXT_YELLOW "pass: %s" TEXT_NORMAL "\n", g_ftpsrv_config.pass);
     }
+    iprintf(TEXT_YELLOW "log: %d" TEXT_NORMAL "\n", log_enabled);
     iprintf(TEXT_YELLOW "\nconfig: %s" TEXT_NORMAL "\n", INI_PATH);
     iprintf("\n");
     consoleUpdate(NULL);
@@ -196,5 +207,7 @@ int main(void) {
     if (g_callback_data) {
         free(g_callback_data);
     }
+
+    log_file_exit();
     return EXIT_SUCCESS;
 }

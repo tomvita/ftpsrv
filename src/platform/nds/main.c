@@ -9,6 +9,7 @@
 
 #include <ftpsrv.h>
 #include <minIni.h>
+#include "log/log.h"
 
 #define TEXT_NORMAL "\033[37;1m"
 #define TEXT_RED "\033[31;1m"
@@ -17,6 +18,7 @@
 #define TEXT_BLUE "\033[34;1m"
 
 static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 static bool g_ftp_init = false;
 
@@ -24,6 +26,7 @@ static PrintConsole topScreen;
 static PrintConsole bottomScreen;
 
 static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
+    log_file_write(msg);
     consoleSelect(&bottomScreen);
     switch (type) {
         case FTP_API_LOG_TYPE_COMMAND:
@@ -101,7 +104,7 @@ int main(void) {
 	consoleInit(&topScreen, 3,BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
 	consoleInit(&bottomScreen, 3,BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
-    consolePrint("\n[ftpsrv 0.1.2 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.2.0 By TotalJustice]\n\n");
 
     // init sd card.
     if (!fatInitDefault()) {
@@ -109,10 +112,15 @@ int main(void) {
     }
 
     g_ftpsrv_config.log_callback = ftp_log_callback;
-    g_ftpsrv_config.anon = ini_getl("Login", "anon", 0, INI_PATH);
+    g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
+    const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
+
+    if (log_enabled) {
+        log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - NDS");
+    }
 
     if (!user_len && !pass_len) {
         g_ftpsrv_config.anon = true;
@@ -144,6 +152,7 @@ int main(void) {
                 iprintf(TEXT_YELLOW "user: %s" TEXT_NORMAL "\n", g_ftpsrv_config.user);
                 iprintf(TEXT_YELLOW "pass: %s" TEXT_NORMAL "\n", g_ftpsrv_config.pass);
             }
+            iprintf(TEXT_YELLOW "log: %d" TEXT_NORMAL "\n", log_enabled);
             iprintf("\n");
             has_net = true;
         }
@@ -167,5 +176,6 @@ int main(void) {
 	}
 
     ftpsrv_exit();
+    log_file_exit();
     return EXIT_SUCCESS;
 }

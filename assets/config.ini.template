@@ -19,6 +19,10 @@ anon = 0
 # ports to be opened (< 1024), however, port 21 works fine for me...
 port = 21
 
+[Log]
+# enables log output to /config/ftpsrv/log.txt
+log = 0
+
 # options specific to Nintendo Switch
 [Nx]
 # enables showing all available mount points at root "/"
@@ -30,3 +34,6 @@ save_application_id = 0x0100F2C0115B6000
 
 # mounts the application bcat data, needs mount_devices = 1
 bcat_application_id = 0x0100F2C0115B6000
+
+# enables led on the controller to light flash
+led = 0
