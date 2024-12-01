@@ -128,6 +128,10 @@ struct FtpSession {
     char cmd_buf[1024];
     size_t cmd_buf_size;
 
+    char send_buf[1024];
+    size_t send_buf_offset;
+    size_t send_buf_size;
+
     struct Pathname pwd;   // current directory
     struct Pathname temp_path; // rename from buffer / LIST fullpath
 };
@@ -410,22 +414,22 @@ static int ftp_build_list_entry(struct FtpSession* session, const time_t cur_tim
     return rc;
 }
 
-static void ftp_client_msg(const struct FtpSession* session, const char* fmt, ...) {
-    char buf[1024] = {0};
+static void ftp_client_msg(struct FtpSession* session, const char* fmt, ...) {
     va_list va;
     va_start(va, fmt);
-    vsnprintf(buf, sizeof(buf) - 2, fmt, va);
+    vsnprintf(session->send_buf, sizeof(session->send_buf) - 2, fmt, va);
     va_end(va);
 
-    const int code = atoi(buf);
+    const int code = atoi(session->send_buf);
     if (code < 400) {
-        ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, buf);
+        ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, session->send_buf);
     } else {
-        ftp_log_callback(FTP_API_LOG_TYPE_ERROR, buf);
+        ftp_log_callback(FTP_API_LOG_TYPE_ERROR, session->send_buf);
     }
 
-    strcat(buf, TELNET_EOL);
-    socket_send(session->control_sock, buf, strlen(buf), 0);
+    strcat(session->send_buf, TELNET_EOL);
+    session->send_buf_offset = 0;
+    session->send_buf_size = strlen(session->send_buf);
 }
 
 // https://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable
@@ -1362,6 +1366,18 @@ static void ftp_session_progress_line(struct FtpSession* session, const char* li
     }
 }
 
+static void ftp_session_send(struct FtpSession* session) {
+    int rc = socket_send(session->control_sock, session->send_buf + session->send_buf_offset, session->send_buf_size - session->send_buf_offset, 0);
+    if (rc < 0) {
+        if (errno != EWOULDBLOCK && errno != EAGAIN) {
+            ftp_session_close(session);
+        }
+    } else {
+        session->send_buf_offset += rc;
+        session->send_buf_size -= rc;
+    }
+}
+
 static void ftp_session_poll(struct FtpSession* session) {
     int rc = socket_recv(session->control_sock, session->cmd_buf + session->cmd_buf_size, sizeof(session->cmd_buf) - session->cmd_buf_size, 0);
     if (rc < 0) {
@@ -1459,7 +1475,11 @@ int ftpsrv_loop(int timeout_ms) {
 
         if (session->active) {
             fds[si].fd = session->control_sock;
-            fds[si].events = POLLIN;
+            if (session->send_buf_size) {
+                fds[si].events = POLLOUT;
+            } else {
+                fds[si].events = POLLIN;
+            }
 
             if (session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
                 // wait until the socket is ready to connect.
@@ -1506,8 +1526,10 @@ int ftpsrv_loop(int timeout_ms) {
 
             if (fds[si].revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 ftp_session_close(session);
-            } else if (fds[si].revents & (POLLIN)) {
+            } else if (fds[si].revents & POLLIN) {
                 ftp_session_poll(session);
+            } else if (fds[si].revents & POLLOUT) {
+                ftp_session_send(session);
             }
 
             // don't close data transfer on error as it will confuse the client (ffmpeg)
@@ -1551,7 +1573,12 @@ int ftpsrv_loop(int timeout_ms) {
         const struct FtpSession* session = &g_ftp.sessions[i];
 
         if (session->active) {
-            FD_SET_HELPER(nfds, session->control_sock, &rfds);
+            if (session->send_buf_size) {
+                FD_SET_HELPER(nfds, session->control_sock, &wfds);
+            } else {
+                FD_SET_HELPER(nfds, session->control_sock, &rfds);
+            }
+
             if (session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
                 if (session->transfer.connection_pending) {
                     if (session->data_connection == FTP_DATA_CONNECTION_PASSIVE) {
@@ -1601,6 +1628,8 @@ int ftpsrv_loop(int timeout_ms) {
                 ftp_session_close(session);
             } else if (FD_ISSET(session->control_sock, &rfds)) {
                 ftp_session_poll(session);
+            } else if (FD_ISSET(session->control_sock, &wfds)) {
+                ftp_session_send(session);
             }
 
             // don't close data transfer on error as it will confuse the client (ffmpeg)
