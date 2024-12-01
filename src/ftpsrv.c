@@ -90,18 +90,13 @@ enum FTP_AUTH_MODE {
     FTP_AUTH_MODE_VALID,     // authenticated
 };
 
-enum FTP_ARGS {
-    FTP_ARGS_NONE,
-    FTP_ARGS_OPTIONAL,
-    FTP_ARGS_REQUIRED,
-};
-
 struct Pathname {
     char s[FTP_PATHNAME_SIZE];
 };
 
 struct FtpTransfer {
     enum FTP_TRANSFER_MODE mode;
+    bool connection_pending;
 
     size_t offset;
     size_t size; // only set during RETR, LIST and NLIST.
@@ -134,15 +129,19 @@ struct FtpSession {
 
     int server_marker; // file offset when using REST
 
+    char cmd_buf[1024];
+    size_t cmd_buf_size;
+
     struct Pathname pwd;   // current directory
     struct Pathname temp_path; // rename from buffer / LIST fullpath
 };
 
 struct FtpCommand {
     const char* name;
-    void (*cmd_func)(struct FtpSession* session, const char* data);
-    int auth_required;
-    int args_required;
+    void (*func)(struct FtpSession* session, const char* data);
+    bool auth_required;
+    bool args_required;
+    bool data_connection_required;
 };
 
 struct Ftp {
@@ -229,6 +228,19 @@ static int ftp_set_socket_nonblocking_enable(int sock) {
         rc = socket_fcntl(sock, F_SETFL, rc | O_NONBLOCK);
     }
     return rc;
+}
+
+static void ftp_set_server_socket_options(int sock) {
+    ftp_set_socket_nonblocking_enable(sock);
+    ftp_set_socket_reuseaddr_enable(sock);
+    ftp_set_socket_nodelay_enable(sock);
+    ftp_set_socket_keepalive_enable(sock);
+}
+
+static void ftp_set_data_socket_options(int sock) {
+    ftp_set_socket_nonblocking_enable(sock);
+    ftp_set_socket_keepalive_enable(sock);
+    ftp_set_socket_throughput_enable(sock);
 }
 
 static inline unsigned socket_bind_port(void) {
@@ -323,11 +335,11 @@ static inline struct Pathname fix_path_for_device(const struct Pathname* path) {
 }
 
 // SOURCE: https://cr.yp.to/ftp/list/binls.html
-static int ftp_build_list_entry(struct FtpSession* session, const time_t cur_time, const struct Pathname* fullpath, const char* name, const struct stat* st, int nlist) {
+static int ftp_build_list_entry(struct FtpSession* session, const time_t cur_time, const struct Pathname* fullpath, const char* name, const struct stat* st) {
     int rc;
     struct FtpTransfer* transfer = &session->transfer;
 
-    if (nlist) {
+    if (transfer->mode == FTP_TRANSFER_MODE_NLST) {
         rc = snprintf(transfer->list_buf, sizeof(transfer->list_buf), "%s" TELNET_EOL, name);
     } else {
         static const char months[12][4] = {
@@ -405,7 +417,7 @@ static int ftp_build_list_entry(struct FtpSession* session, const time_t cur_tim
 }
 
 static void ftp_client_msg(const struct FtpSession* session, const char* fmt, ...) {
-    char buf[1024 * 4] = {0};
+    char buf[1024] = {0};
     va_list va;
     va_start(va, fmt);
     vsnprintf(buf, sizeof(buf) - 2, fmt, va);
@@ -429,41 +441,11 @@ static void ftp_close_socket(int* sock) {
     // has been sent to the kernel!
     // when calling close, the kernel *may* remove that data, and
     // thus the client will *not* receive it!
-    if (*sock > 0) {
+    if (*sock >= 0) {
         socket_shutdown(*sock, SHUT_RDWR);
         socket_close(*sock);
         *sock = -1;
     }
-}
-
-static int ftp_data_open(struct FtpSession* session) {
-    int rc = 0;
-    ftp_client_msg(session, "150 File status okay; about to open data connection.");
-
-    switch (session->data_connection) {
-        case FTP_DATA_CONNECTION_NONE:
-            rc = -1;
-            break;
-        case FTP_DATA_CONNECTION_ACTIVE:
-            rc = session->data_sock = socket_open(PF_INET, SOCK_STREAM, 0);
-            if (rc > 0) {
-                rc = socket_connect(session->data_sock, (struct sockaddr*)&session->data_sockaddr, sizeof(session->data_sockaddr));
-            }
-            break;
-        case FTP_DATA_CONNECTION_PASSIVE: {
-            socklen_t socklen = sizeof(session->pasv_sockaddr);
-            rc = session->data_sock = socket_accept(session->pasv_sock, (struct sockaddr*)&session->pasv_sockaddr, &socklen);
-        }
-        break;
-    }
-
-    if (rc > 0) {
-        ftp_set_socket_nonblocking_enable(session->data_sock);
-        ftp_set_socket_keepalive_enable(session->data_sock);
-        ftp_set_socket_throughput_enable(session->data_sock);
-    }
-
-    return rc;
 }
 
 static void ftp_data_transfer_end(struct FtpSession* session) {
@@ -482,6 +464,7 @@ static void ftp_data_transfer_end(struct FtpSession* session) {
     ftp_vfs_close(&session->transfer.file_vfs);
     ftp_vfs_closedir(&session->transfer.dir_vfs);
 
+    session->transfer.connection_pending = false;
     session->temp_path.s[0] = '\0';
     session->transfer.offset = 0;
     session->transfer.size = 0;
@@ -489,9 +472,54 @@ static void ftp_data_transfer_end(struct FtpSession* session) {
     session->data_connection = FTP_DATA_CONNECTION_NONE;
 }
 
+static void ftp_data_open(struct FtpSession* session, enum FTP_TRANSFER_MODE mode) {
+    int rc = 0;
+    ftp_client_msg(session, "150 File status okay; about to open data connection.");
+
+    if (session->data_connection == FTP_DATA_CONNECTION_ACTIVE) {
+        rc = session->data_sock = socket_open(PF_INET, SOCK_STREAM, 0);
+        if (rc >= 0) {
+            ftp_set_data_socket_options(session->data_sock);
+        }
+    }
+
+    if (rc < 0) {
+        ftp_client_msg(session, "425 Can't open data connection [NORM], %s.", strerror(errno));
+        ftp_data_transfer_end(session);
+    } else {
+        session->transfer.mode = mode;
+        session->transfer.index = 0;
+        session->transfer.connection_pending = true;
+    }
+}
+
+static void ftp_data_poll(struct FtpSession* session) {
+    int rc = 0;
+
+    if (session->data_connection == FTP_DATA_CONNECTION_ACTIVE) {
+        rc = socket_connect(session->data_sock, (struct sockaddr*)&session->data_sockaddr, sizeof(session->data_sockaddr));
+    } else {
+        socklen_t socklen = sizeof(session->pasv_sockaddr);
+        rc = session->data_sock = socket_accept(session->pasv_sock, (struct sockaddr*)&session->pasv_sockaddr, &socklen);
+        if (rc >= 0) {
+            ftp_set_data_socket_options(session->data_sock);
+        }
+    }
+
+    if (rc < 0) {
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, "\taccept would block!");
+        } else {
+            ftp_client_msg(session, "425 Can't open data connection, [poll] %s.", strerror(errno));
+            ftp_data_transfer_end(session);
+        }
+    } else {
+        session->transfer.connection_pending = false;
+    }
+}
+
 static void ftp_dir_data_transfer_progress(struct FtpSession* session) {
     const time_t cur_time = time(NULL);
-    const bool nlist = session->transfer.mode == FTP_TRANSFER_MODE_NLST;
     const bool device_list = g_ftp.cfg.devices && g_ftp.cfg.devices_count && !strcmp("/", session->temp_path.s);
     const bool is_root = !strcmp("/", session->temp_path.s);
     struct FtpTransfer* transfer = &session->transfer;
@@ -533,7 +561,7 @@ static void ftp_dir_data_transfer_progress(struct FtpSession* session) {
                 struct stat st = {0};
                 st.st_nlink = 1;
                 st.st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
-                ftp_build_list_entry(session, cur_time, NULL, g_ftp.cfg.devices[transfer->index++].mount, &st, nlist);
+                ftp_build_list_entry(session, cur_time, NULL, g_ftp.cfg.devices[transfer->index++].mount, &st);
             } else {
                 struct FtpVfsDirEntry entry;
                 const char* name = ftp_vfs_readdir(&transfer->dir_vfs, &entry);
@@ -565,7 +593,7 @@ static void ftp_dir_data_transfer_progress(struct FtpSession* session) {
                     continue;
                 }
 
-                ftp_build_list_entry(session, cur_time, &filepath, name, &st, nlist);
+                ftp_build_list_entry(session, cur_time, &filepath, name, &st);
             }
         }
     }
@@ -768,6 +796,8 @@ static void ftp_cmd_PASV(struct FtpSession* session, const char* data) {
     if (rc < 0) {
         ftp_client_msg(session, "501 open failed Syntax error in parameters or arguments.");
     } else {
+        ftp_set_server_socket_options(session->pasv_sock);
+
         // copy current over ip addr
         session->pasv_sockaddr = session->control_sockaddr;
         session->pasv_sockaddr.sin_port = htons(socket_bind_port());
@@ -782,20 +812,23 @@ static void ftp_cmd_PASV(struct FtpSession* session, const char* data) {
             } else {
                 socklen_t base_len = sizeof(session->pasv_sockaddr);
                 rc = socket_getsockname(session->pasv_sock, (struct sockaddr*)&session->pasv_sockaddr, &base_len);
-
-                char ip_buf[16] = {0};
-                const char* addr_s = inet_ntoa(session->control_sockaddr.sin_addr);
-                for (int i = 0; addr_s[i]; i++) {
-                    ip_buf[i] = addr_s[i];
-                    if (ip_buf[i] == '.') {
-                        ip_buf[i] = ',';
+                if (rc < 0) {
+                    ftp_client_msg(session, "501 socket_getsockname failed Syntax error in parameters or arguments, %s.", strerror(errno));
+                } else {
+                    char ip_buf[16] = {0};
+                    const char* addr_s = inet_ntoa(session->control_sockaddr.sin_addr);
+                    for (int i = 0; addr_s[i]; i++) {
+                        ip_buf[i] = addr_s[i];
+                        if (ip_buf[i] == '.') {
+                            ip_buf[i] = ',';
+                        }
                     }
-                }
 
-                const unsigned port = ntohs(session->pasv_sockaddr.sin_port);
-                session->data_connection = FTP_DATA_CONNECTION_PASSIVE;
-                ftp_client_msg(session, "227 Entering Passive Mode (%s,%u,%u)", ip_buf, port >> 8, port & 0xFF);
-                return;
+                    const unsigned port = ntohs(session->pasv_sockaddr.sin_port);
+                    session->data_connection = FTP_DATA_CONNECTION_PASSIVE;
+                    ftp_client_msg(session, "227 Entering Passive Mode (%s,%u,%u)", ip_buf, port >> 8, port & 0xFF);
+                    return;
+                }
             }
         }
         ftp_close_socket(&session->pasv_sock);
@@ -884,16 +917,9 @@ static void ftp_cmd_RETR(struct FtpSession* session, const char* data) {
                     if (rc < 0) {
                         ftp_client_msg(session, "550 Requested action not taken, %s.", strerror(errno));
                     } else {
-                        rc = ftp_data_open(session);
-                        if (rc < 0) {
-                            ftp_client_msg(session, "425 Can't open data connection, %s.", strerror(errno));
-                        } else {
-                            session->transfer.mode = FTP_TRANSFER_MODE_RETR;
-                            return;
-                        }
+                        ftp_data_open(session, FTP_TRANSFER_MODE_RETR);
                     }
                 }
-                ftp_vfs_close(&session->transfer.file_vfs);
             }
         }
     }
@@ -922,14 +948,7 @@ static void ftp_cmd_STOR(struct FtpSession* session, const char* data) {
             if (rc < 0) {
                 ftp_client_msg(session, "551 Requested action aborted: page type unknown, %s.", strerror(errno));
             } else {
-                rc = ftp_data_open(session);
-                if (rc < 0) {
-                    ftp_client_msg(session, "425 Can't open data connection, %s.", strerror(errno));
-                } else {
-                    session->transfer.mode = FTP_TRANSFER_MODE_STOR;
-                    return;
-                }
-                ftp_vfs_close(&session->transfer.file_vfs);
+                ftp_data_open(session, FTP_TRANSFER_MODE_STOR);
             }
         }
     }
@@ -1095,9 +1114,8 @@ static void ftp_cmd_PWD(struct FtpSession* session, const char* data) {
 }
 
 // used by LIST and NLIST
-static void ftp_list_directory(struct FtpSession* session, const char* data, int nlist) {
+static void ftp_list_directory(struct FtpSession* session, const char* data, enum FTP_TRANSFER_MODE mode) {
     struct Pathname pathname = {0};
-    const enum FTP_TRANSFER_MODE mode = nlist ? FTP_TRANSFER_MODE_NLST : FTP_TRANSFER_MODE_LIST;
     int rc = sscanf(data, "%"FTP_PATHNAME_SSCANF"[^"TELNET_EOL"]", pathname.s);
 
     // see issue: #2
@@ -1113,24 +1131,9 @@ static void ftp_list_directory(struct FtpSession* session, const char* data, int
     } else {
         // check if on root and using devices
         if (g_ftp.cfg.devices && g_ftp.cfg.devices_count && !strcmp("/", session->temp_path.s)) {
-            rc = ftp_data_open(session);
-            if (rc < 0) {
-                ftp_client_msg(session, "425 Can't open data connection, %s.", strerror(errno));
-            } else {
-                session->transfer.index = 0;
-                session->transfer.mode = mode;
-                return;
-            }
+            session->transfer.index = 0;
+            ftp_data_open(session, mode);
         } else {
-            #if 0
-            ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, "\tLOG START");
-            ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, g_ftp.cfg.devices ? "has dev array" : "no dev array");
-            ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, g_ftp.cfg.devices_count ? "has dev count" : "no dev count");
-            ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, !strcmp("/", session->temp_path.s) ? "is root" : "not root");
-            ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, session->temp_path.s);
-            ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, "\tLOG END.");
-            #endif
-
             session->temp_path = fix_path_for_device(&session->temp_path);
             struct stat st = {0};
             rc = ftp_vfs_lstat(session->temp_path.s, &st);
@@ -1142,28 +1145,15 @@ static void ftp_list_directory(struct FtpSession* session, const char* data, int
                     if (rc < 0) {
                         ftp_client_msg(session, "450 Requested file action not taken. %s. Failed to open dir: %s.", strerror(errno), session->temp_path.s);
                     } else {
-                        rc = ftp_data_open(session);
-                        if (rc < 0) {
-                            ftp_client_msg(session, "425 Can't open data connection, %s.", strerror(errno));
-                        } else {
-                            session->transfer.mode = mode;
-                            return;
-                        }
-                        ftp_vfs_closedir(&session->transfer.dir_vfs);
+                        ftp_data_open(session, mode);
                     }
-                } else if (!nlist) {
+                } else if (mode == FTP_TRANSFER_MODE_LIST) {
                     const time_t cur_time = time(NULL);
-                    rc = ftp_build_list_entry(session, cur_time, &session->temp_path, pathname.s, &st, nlist);
+                    rc = ftp_build_list_entry(session, cur_time, &session->temp_path, pathname.s, &st);
                     if (rc < 0) {
                         ftp_client_msg(session, "450 Requested file action not taken, %s. Failed to build entry: %s.", strerror(errno), session->temp_path.s);
                     } else {
-                        rc = ftp_data_open(session);
-                        if (rc < 0) {
-                            ftp_client_msg(session, "425 Can't open data connection, %s.", strerror(errno));
-                        } else {
-                            session->transfer.mode = mode;
-                            return;
-                        }
+                        ftp_data_open(session, mode);
                     }
                 } else {
                     ftp_client_msg(session, "450 Requested file action not taken. Nlist on file is not valid.");
@@ -1175,12 +1165,12 @@ static void ftp_list_directory(struct FtpSession* session, const char* data, int
 
 // LIST [<SP> <pathname>] <CRLF> | 125, 150, 226, 250, 425, 426, 451, 450, 500, 501, 502, 421, 530
 static void ftp_cmd_LIST(struct FtpSession* session, const char* data) {
-    ftp_list_directory(session, data, 0);
+    ftp_list_directory(session, data, FTP_TRANSFER_MODE_LIST);
 }
 
 // NLST [<SP> <pathname>] <CRLF> | 125, 150, 226, 250, 425, 426, 451, 450, 500, 501, 502, 421, 530
 static void ftp_cmd_NLST(struct FtpSession* session, const char* data) {
-    ftp_list_directory(session, data, 1);
+    ftp_list_directory(session, data, FTP_TRANSFER_MODE_NLST);
 }
 
 // SITE [<SP> <string>] <CRLF> | 200, 202, 500, 501, 530
@@ -1243,75 +1233,83 @@ static void ftp_cmd_SIZE(struct FtpSession* session, const char* data) {
 
 static const struct FtpCommand FTP_COMMANDS[] = {
     // ACCESS CONTROL COMMANDS: https://datatracker.ietf.org/doc/html/rfc959#section-4
-    { "USER", ftp_cmd_USER, 0, FTP_ARGS_REQUIRED },
-    { "PASS", ftp_cmd_PASS, 0, FTP_ARGS_REQUIRED },
-    { "ACCT", ftp_cmd_ACCT, 0, FTP_ARGS_REQUIRED },
-    { "CWD", ftp_cmd_CWD, 1, FTP_ARGS_REQUIRED },
-    { "CDUP", ftp_cmd_CDUP, 1, FTP_ARGS_NONE },
-    { "SMNT", ftp_cmd_SMNT, 1, FTP_ARGS_REQUIRED },
-    { "REIN", ftp_cmd_REIN, 0, FTP_ARGS_NONE },
-    { "QUIT", ftp_cmd_QUIT, 0, FTP_ARGS_NONE },
+    { .name = "USER", .func = ftp_cmd_USER, .auth_required = 0, .args_required = 1, .data_connection_required = 0 },
+    { .name = "PASS", .func = ftp_cmd_PASS, .auth_required = 0, .args_required = 1, .data_connection_required = 0 },
+    { .name = "ACCT", .func = ftp_cmd_ACCT, .auth_required = 0, .args_required = 1, .data_connection_required = 0 },
+    { .name = "CWD",  .func = ftp_cmd_CWD,  .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "CDUP", .func = ftp_cmd_CDUP, .auth_required = 1, .args_required = 0, .data_connection_required = 0 },
+    { .name = "SMNT", .func = ftp_cmd_SMNT, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "REIN", .func = ftp_cmd_REIN, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
+    { .name = "QUIT", .func = ftp_cmd_QUIT, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
 
     // TRANSFER PARAMETER COMMANDS
-    { "PORT", ftp_cmd_PORT, 1, FTP_ARGS_REQUIRED },
-    { "PASV", ftp_cmd_PASV, 1, FTP_ARGS_NONE },
-    { "TYPE", ftp_cmd_TYPE, 1, FTP_ARGS_REQUIRED },
-    { "STRU", ftp_cmd_STRU, 1, FTP_ARGS_REQUIRED },
-    { "MODE", ftp_cmd_MODE, 1, FTP_ARGS_REQUIRED },
+    { .name = "PORT", .func = ftp_cmd_PORT, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "PASV", .func = ftp_cmd_PASV, .auth_required = 1, .args_required = 0, .data_connection_required = 0 },
+    { .name = "TYPE", .func = ftp_cmd_TYPE, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "STRU", .func = ftp_cmd_STRU, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "MODE", .func = ftp_cmd_MODE, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
 
     // FTP SERVICE COMMANDS
-    { "RETR", ftp_cmd_RETR, 1, FTP_ARGS_REQUIRED },
-    { "STOR", ftp_cmd_STOR, 1, FTP_ARGS_REQUIRED },
-    // { "STOU", ftp_cmd_STOU, 1, FTP_ARGS_NONE },
-    { "APPE", ftp_cmd_APPE, 1, FTP_ARGS_REQUIRED },
-    { "ALLO", ftp_cmd_ALLO, 1, FTP_ARGS_REQUIRED },
-    { "REST", ftp_cmd_REST, 1, FTP_ARGS_REQUIRED },
-    { "RNFR", ftp_cmd_RNFR, 1, FTP_ARGS_REQUIRED },
-    { "RNTO", ftp_cmd_RNTO, 1, FTP_ARGS_REQUIRED },
-    { "ABOR", ftp_cmd_ABOR, 0, FTP_ARGS_NONE },
-    { "DELE", ftp_cmd_DELE, 1, FTP_ARGS_REQUIRED },
-    { "RMD", ftp_cmd_RMD, 1, FTP_ARGS_REQUIRED },
-    { "MKD", ftp_cmd_MKD, 1, FTP_ARGS_REQUIRED },
-    { "PWD", ftp_cmd_PWD, 1, FTP_ARGS_NONE },
-    { "LIST", ftp_cmd_LIST, 1, FTP_ARGS_OPTIONAL },
-    { "NLST", ftp_cmd_NLST, 1, FTP_ARGS_OPTIONAL },
-    { "SITE", ftp_cmd_SITE, 1, FTP_ARGS_REQUIRED },
-    { "SYST", ftp_cmd_SYST, 0, FTP_ARGS_NONE },
-    { "STAT", ftp_cmd_STAT, 1, FTP_ARGS_OPTIONAL },
-    { "HELP", ftp_cmd_HELP, 0, FTP_ARGS_OPTIONAL },
-    { "NOOP", ftp_cmd_NOOP, 0, FTP_ARGS_NONE },
+    { .name = "RETR", .func = ftp_cmd_RETR, .auth_required = 1, .args_required = 1, .data_connection_required = 1 },
+    { .name = "STOR", .func = ftp_cmd_STOR, .auth_required = 1, .args_required = 1, .data_connection_required = 1 },
+    // { .name = "STOU",  .func = ftp_cmd_STOU, .auth_required = 1, .args_required = 0, .data_connection_required = 0 },
+    { .name = "APPE", .func = ftp_cmd_APPE, .auth_required = 1, .args_required = 1, .data_connection_required = 1 },
+    { .name = "ALLO", .func = ftp_cmd_ALLO, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "REST", .func = ftp_cmd_REST, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "RNFR", .func = ftp_cmd_RNFR, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "RNTO", .func = ftp_cmd_RNTO, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "ABOR", .func = ftp_cmd_ABOR, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
+    { .name = "DELE", .func = ftp_cmd_DELE, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "RMD",  .func = ftp_cmd_RMD,  .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "MKD",  .func = ftp_cmd_MKD,  .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "PWD",  .func = ftp_cmd_PWD,  .auth_required = 1, .args_required = 0, .data_connection_required = 0 },
+    { .name = "LIST", .func = ftp_cmd_LIST, .auth_required = 1, .args_required = 0, .data_connection_required = 1 },
+    { .name = "NLST", .func = ftp_cmd_NLST, .auth_required = 1, .args_required = 0, .data_connection_required = 1 },
+    { .name = "SITE", .func = ftp_cmd_SITE, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "SYST", .func = ftp_cmd_SYST, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
+    { .name = "STAT", .func = ftp_cmd_STAT, .auth_required = 1, .args_required = 0, .data_connection_required = 0 },
+    { .name = "HELP", .func = ftp_cmd_HELP, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
+    { .name = "NOOP", .func = ftp_cmd_NOOP, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
 
     // extensions
-    { "FEAT", ftp_cmd_FEAT, 0, FTP_ARGS_NONE },
-    { "SIZE", ftp_cmd_SIZE, 1, FTP_ARGS_REQUIRED },
+    { .name = "FEAT", .func = ftp_cmd_FEAT, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
+    { .name = "SIZE", .func = ftp_cmd_SIZE, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
 };
 
 static int ftp_session_init(struct FtpSession* session) {
     struct sockaddr_in sa;
     socklen_t addr_len = sizeof(sa);
+    int rc = 0;
+    errno = 0;
 
-    int control_sock = socket_accept(g_ftp.server_sock, (struct sockaddr*)&sa, &addr_len);
-    if (control_sock < 0) {
-        return control_sock;
+    int control_sock = rc = socket_accept(g_ftp.server_sock, (struct sockaddr*)&sa, &addr_len);
+    if (rc < 0) {
+        return rc;
     } else {
-        ftp_set_socket_nodelay_enable(control_sock);
-        ftp_set_socket_keepalive_enable(control_sock);
-        ftp_set_socket_oobline_enable(session->data_sock);
+        ftp_set_server_socket_options(control_sock);
 
         memset(session, 0, sizeof(*session));
-        session->active = 1;
         session->control_sock = control_sock;
-        session->data_connection = FTP_DATA_CONNECTION_NONE;
         session->control_sockaddr = sa;
         addr_len = sizeof(session->control_sockaddr);
-        socket_getsockname(session->control_sock, (struct sockaddr*)&session->control_sockaddr, &addr_len);
-        strcpy(session->pwd.s, "/");
 
-        g_ftp.session_count++;
-        // printf("opening session, count: %d\n", g_ftp.session_count);
-        ftp_client_msg(session, "220 Service ready for new user.");
-        return 0;
+        rc = socket_getsockname(session->control_sock, (struct sockaddr*)&session->control_sockaddr, &addr_len);
+        if (rc < 0) {
+            ftp_client_msg(session, "451 Failed to get connection info, %s.", strerror(errno));
+        } else {
+            session->active = 1;
+            session->data_sock = -1;
+            session->pasv_sock = -1;
+            session->data_connection = FTP_DATA_CONNECTION_NONE;
+            strcpy(session->pwd.s, "/");
+            g_ftp.session_count++;
+            // printf("opening session, count: %d\n", g_ftp.session_count);
+            ftp_client_msg(session, "220 Service ready for new user.");
+            return 0;
+        }
+        ftp_close_socket(&control_sock);
     }
+    return rc;
 }
 
 static void ftp_session_close(struct FtpSession* session) {
@@ -1320,7 +1318,6 @@ static void ftp_session_close(struct FtpSession* session) {
         ftp_data_transfer_end(session);
         memset(session, 0, sizeof(*session));
         g_ftp.session_count--;
-        // printf("closing session, count: %d\n", g_ftp.session_count);
     }
 }
 
@@ -1328,7 +1325,7 @@ static void ftp_session_close(struct FtpSession* session) {
 static void ftp_session_progress_line(struct FtpSession* session, const char* line, int line_len) {
     char cmd_name[5] = {0};
     int rc = sscanf(line, "%4[^"TELNET_EOL"]", cmd_name);
-    if (rc <= 0) {
+    if (rc <= 0 ) {
         ftp_client_msg(session, "500 Syntax error, command unrecognized.");
     } else {
         ftp_log_callback(FTP_API_LOG_TYPE_COMMAND, cmd_name);
@@ -1343,60 +1340,61 @@ static void ftp_session_progress_line(struct FtpSession* session, const char* li
         }
 
         if (command_id < 0) {
-            ftp_client_msg(session, "500 Syntax error, command unrecognized.");
+            ftp_client_msg(session, "500 Syntax error, command \"%s\" unrecognized.", cmd_name);
         } else {
             const struct FtpCommand* cmd = &FTP_COMMANDS[command_id];
-            if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
+            char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
+
+            // validate the command
+            if (!cmd->args_required && cmd_args) {
+                ftp_client_msg(session, "501 Syntax error in parameters or arguments, extra args.");
+            } else if (cmd->args_required && !cmd_args) {
+                ftp_client_msg(session, "501 Syntax error in parameters or arguments, missing required args.");
+            } else if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
                 ftp_client_msg(session, "530 Not logged in.");
+            } else if (cmd->data_connection_required && session->data_connection == FTP_DATA_CONNECTION_NONE) {
+                ftp_client_msg(session, "501 Syntax error in parameters or arguments, no data connection.");
             } else {
-                // data transfers are async, but only abort cmd is allowed.
-                if (session->transfer.mode != FTP_TRANSFER_MODE_NONE && strcasecmp(cmd->name, "ABOR")) {
-                    ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
-                } else {
-                    const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
-                    if (cmd_args) {
-                        if (cmd->args_required == FTP_ARGS_NONE) {
-                            ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
-                        } else {
-                            cmd->cmd_func(session, cmd_args + 1);
-                        }
-                    } else {
-                        if (cmd->args_required == FTP_ARGS_REQUIRED) {
-                            ftp_client_msg(session, "501 Syntax error in parameters or arguments.");
-                        }
-                        else {
-                            cmd->cmd_func(session, "\0");
-                        }
-                    }
-                }
+                const char* args = cmd_args ? cmd_args + 1 : "\0";
+                cmd->func(session, args);
             }
         }
     }
 }
 
 static void ftp_session_poll(struct FtpSession* session) {
-    memset(g_ftp.data_buf, 0, sizeof(g_ftp.data_buf));
-
-    int rc = socket_recv(session->control_sock, g_ftp.data_buf, sizeof(g_ftp.data_buf) - 1, 0);
+    errno = 0;
+    int rc = socket_recv(session->control_sock, session->cmd_buf + session->cmd_buf_size, sizeof(session->cmd_buf) - session->cmd_buf_size - 1, 0);
     if (rc < 0) {
-        // printf("closing session due to recv error\n");
-        ftp_session_close(session);
+        if (errno != EWOULDBLOCK && errno != EAGAIN) {
+            printf("closing session due to recv error\n");
+            ftp_session_close(session);
+        }
     } else if (rc == 0) {
-        // printf("closing session due to rc error\n");
+        printf("closing session due to rc error\n");
         ftp_session_close(session);
     } else {
-        size_t line_offset = 0;
-        while (1) {
-            const char* end_line = strstr((char*)g_ftp.data_buf + line_offset, TELNET_EOL);
-            const char* line = (char*)g_ftp.data_buf + line_offset;
-            const int line_len = end_line + strlen(TELNET_EOL) - ((char*)g_ftp.data_buf + line_offset);
+        session->cmd_buf_size += rc;
+        while (session->cmd_buf_size) {
+            session->cmd_buf[session->cmd_buf_size] = '\0';
+            const char* end_line = strstr(session->cmd_buf, TELNET_EOL);
+            const char* line = session->cmd_buf;
             if (!end_line) {
+                // no room for TELNET_EOL, so reset the buffer.
+                if (session->cmd_buf_size >= sizeof(session->cmd_buf) - 2) {
+                    memset(session->cmd_buf, 0, sizeof(session->cmd_buf));
+                    session->cmd_buf_size = 0;
+                }
                 break;
             }
 
             // printf("got recv %.*s\n", line_len - 2, line);
+            const size_t line_len = end_line + strlen(TELNET_EOL) - session->cmd_buf;
             ftp_session_progress_line(session, line, line_len);
-            line_offset += line_len;
+            memmove(session->cmd_buf, session->cmd_buf + line_len, session->cmd_buf_size - line_len);
+            // line_offset += line_len;
+            session->cmd_buf_size -= line_len;
+            // memset(session->cmd_buf + session->cmd_buf_size, 0, sizeof(session->cmd_buf_size) - session->cmd_buf_size);
         }
     }
 }
@@ -1414,10 +1412,7 @@ int ftpsrv_init(const struct FtpSrvConfig* cfg) {
         rc = g_ftp.server_sock = socket_open(PF_INET, SOCK_STREAM, 0);
         if (rc < 0) {
         } else {
-            ftp_set_socket_nonblocking_enable(g_ftp.server_sock);
-            ftp_set_socket_reuseaddr_enable(g_ftp.server_sock);
-            ftp_set_socket_nodelay_enable(g_ftp.server_sock);
-            ftp_set_socket_keepalive_enable(g_ftp.server_sock);
+            ftp_set_server_socket_options(g_ftp.server_sock);
 
             struct sockaddr_in sa = {
                 .sin_family = PF_INET,
@@ -1442,7 +1437,7 @@ int ftpsrv_loop(int timeout_ms) {
         return FTP_API_LOOP_ERROR_INIT;
     }
 
-    static struct pollfd fds[1 + FTP_MAX_SESSIONS * 2] = {0};
+    struct pollfd fds[1 + FTP_MAX_SESSIONS * 2] = {0};
     const nfds_t nfds = FTP_ARR_SZ(fds);
 
     // initialise fds.
@@ -1452,8 +1447,10 @@ int ftpsrv_loop(int timeout_ms) {
     }
 
     // add server socket to the first entry.
-    fds[0].fd = g_ftp.server_sock;
-    fds[0].events = POLLIN | POLLPRI;
+    if (g_ftp.session_count < FTP_MAX_SESSIONS) {
+        fds[0].fd = g_ftp.server_sock;
+        fds[0].events = POLLIN;
+    }
 
     // add each session control and data socket.
     for (size_t i = 0; i < FTP_ARR_SZ(g_ftp.sessions); i++) {
@@ -1463,14 +1460,24 @@ int ftpsrv_loop(int timeout_ms) {
 
         if (session->active) {
             fds[si].fd = session->control_sock;
-            fds[si].events = POLLIN | POLLPRI;
+            fds[si].events = POLLIN;
 
             if (session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
-                fds[sd].fd = session->data_sock;
-                if (session->transfer.mode == FTP_TRANSFER_MODE_STOR) {
+                // wait until the socket is ready to connect.
+                if (session->transfer.connection_pending) {
                     fds[sd].events = POLLIN;
+                    if (session->data_connection == FTP_DATA_CONNECTION_PASSIVE) {
+                        fds[sd].fd = session->pasv_sock;
+                    } else {
+                        fds[sd].fd = session->data_sock;
+                    }
                 } else {
-                    fds[sd].events = POLLOUT;
+                    fds[sd].fd = session->data_sock;
+                    if (session->transfer.mode == FTP_TRANSFER_MODE_STOR) {
+                        fds[sd].events = POLLIN;
+                    } else {
+                        fds[sd].events = POLLOUT;
+                    }
                 }
             }
         }
@@ -1482,7 +1489,7 @@ int ftpsrv_loop(int timeout_ms) {
     } else {
         if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
             return FTP_API_LOOP_ERROR_INIT;
-        } else if (fds[0].revents & (POLLIN | POLLPRI)) {
+        } else if (fds[0].revents & POLLIN) {
             for (size_t i = 0; i < FTP_ARR_SZ(g_ftp.sessions); i++) {
                 if (!g_ftp.sessions[i].active) {
                     ftp_session_init(&g_ftp.sessions[i]);
@@ -1496,16 +1503,20 @@ int ftpsrv_loop(int timeout_ms) {
             const size_t sd = 1 + i * 2 + 1;
             struct FtpSession* session = &g_ftp.sessions[i];
 
-            if (fds[si].revents & (POLLERR | POLLHUP)) {
+            if (fds[si].revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 ftp_session_close(session);
-            } else if (fds[si].revents & (POLLIN | POLLPRI)) {
+            } else if (fds[si].revents & (POLLIN)) {
                 ftp_session_poll(session);
             }
 
             // don't close data transfer on error as it will confuse the client (ffmpeg)
             if (session->active && session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
                 if (fds[sd].revents & (POLLIN | POLLOUT)) {
-                    ftp_data_transfer_progress(session);
+                    if (session->transfer.connection_pending) {
+                        ftp_data_poll(session);
+                    } else {
+                        ftp_data_transfer_progress(session);
+                    }
                 }
             }
         }
@@ -1541,10 +1552,18 @@ int ftpsrv_loop(int timeout_ms) {
         if (session->active) {
             FD_SET_HELPER(nfds, session->control_sock, &rfds);
             if (session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
-                if (session->transfer.mode == FTP_TRANSFER_MODE_STOR) {
-                    FD_SET_HELPER(nfds, session->data_sock, &rfds);
+                if (session->transfer.connection_pending) {
+                    if (session->data_connection == FTP_DATA_CONNECTION_PASSIVE) {
+                        FD_SET_HELPER(nfds, session->pasv_sock, &rfds);
+                    } else {
+                        FD_SET_HELPER(nfds, session->data_sock, &rfds);
+                    }
                 } else {
-                    FD_SET_HELPER(nfds, session->data_sock, &wfds);
+                    if (session->transfer.mode == FTP_TRANSFER_MODE_STOR) {
+                        FD_SET_HELPER(nfds, session->data_sock, &rfds);
+                    } else {
+                        FD_SET_HELPER(nfds, session->data_sock, &wfds);
+                    }
                 }
             }
         }
@@ -1586,7 +1605,11 @@ int ftpsrv_loop(int timeout_ms) {
             // don't close data transfer on error as it will confuse the client (ffmpeg)
             if (session->active && session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
                 if (FD_ISSET(session->data_sock, &rfds) || FD_ISSET(session->data_sock, &wfds)) {
-                    ftp_data_transfer_progress(session);
+                    if (session->transfer.connection_pending) {
+                        ftp_data_poll(session);
+                    } else {
+                        ftp_data_transfer_progress(session);
+                    }
                 }
             }
         }

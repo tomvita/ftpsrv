@@ -35,7 +35,11 @@ int ftp_vfs_open(struct FtpVfsFile* f, const char* path, enum FtpVfsOpenMode mod
             break;
     }
 
-    return f->fd = open(path, flags, args);
+    f->fd = open(path, flags, args);
+    if (f->fd >= 0) {
+        f->valid = 1;
+    }
+    return f->fd;
 }
 
 int ftp_vfs_read(struct FtpVfsFile* f, void* buf, size_t size) {
@@ -59,12 +63,13 @@ int ftp_vfs_close(struct FtpVfsFile* f) {
     if (ftp_vfs_isfile_open(f)) {
         rc = close(f->fd);
         f->fd = -1;
+        f->valid = 0;
     }
     return rc;
 }
 
 int ftp_vfs_isfile_open(struct FtpVfsFile* f) {
-    return f->fd >= 0;
+    return f->valid && f->fd >= 0;
 }
 
 int ftp_vfs_opendir(struct FtpVfsDir* f, const char* path) {

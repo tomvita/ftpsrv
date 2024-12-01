@@ -11,6 +11,7 @@ extern "C" {
 
 struct FtpVfsFile {
     int fd;
+    int valid;
 };
 
 struct FtpVfsDir {
