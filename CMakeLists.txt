@@ -113,14 +113,11 @@ function(ftp_set_compile_definitions target)
 endfunction(ftp_set_compile_definitions)
 
 function(ftp_set_options target path_size sessions buf_size)
-    # path size is -1
-    math(EXPR sscanf_val "${path_size} - 1" OUTPUT_FORMAT DECIMAL)
     # add base defs
     ftp_set_compile_definitions(${target})
     # add the rest
     target_compile_definitions(${target} PRIVATE
         FTP_PATHNAME_SIZE=${path_size}
-        FTP_PATHNAME_SSCANF="${sscanf_val}"
         FTP_MAX_SESSIONS=${sessions}
         FTP_FILE_BUFFER_SIZE=${buf_size}
     )
