@@ -34,7 +34,7 @@ int main(void) {
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
-    g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
+    g_ftpsrv_config.port = ini_getl("Network", "sys-port", 5001, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
@@ -57,10 +57,22 @@ int main(void) {
             if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
                 add_device("switch");
             }
-
+            if (!fsdev_wrapMountDevice("breeze", "/switch/breeze", *sdmc, false)) {
+                add_device("breeze");
+            }
+            if (!fsdev_wrapMountDevice("cheats", "/switch/breeze/cheats", *sdmc, false)) {
+                add_device("cheats");
+            }
             if (!fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false)) {
                 add_device("contents");
             }
+            char game_cheat_dir_str[21] = {0};
+            static char game_cheat_dir_path[80] = "/switch/breeze/cheats/";
+            ini_gets("Nx", "game_cheat_dir", "", game_cheat_dir_str, sizeof(game_cheat_dir_str), INI_PATH);
+            strcat(game_cheat_dir_path,game_cheat_dir_str);
+            if (!fsdev_wrapMountDevice(game_cheat_dir_str, game_cheat_dir_path, *sdmc, false)) {
+                add_device(game_cheat_dir_str);
+            };
         }
 
         g_ftpsrv_config.devices = g_devices;

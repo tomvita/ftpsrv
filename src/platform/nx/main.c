@@ -132,7 +132,7 @@ static int error_loop(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    consolePrint("\n[ftpsrv 0.2.0-v1 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv 0.2.0-v1 By TotalJustice, customized for Breeze by tomvita]\n\n");
 
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
@@ -167,12 +167,16 @@ int main(int argc, char** argv) {
             add_device("image_sd");
         }
 
-        AccountUid uid;
-        if (R_SUCCEEDED(accountTrySelectUserWithoutInteraction(&uid, false))) {
-            if (R_SUCCEEDED(fsdev_wrapMountSave("save", save_id, uid))) {
-                add_device("save");
-            }
-        }
+        AccountUid uid[2];
+        s32 actual_total;
+        if (R_SUCCEEDED(accountListAllUsers(uid, 2, &actual_total))) {
+            if (R_SUCCEEDED(fsdev_wrapMountSave("save0", save_id, uid[0]))) {
+                add_device("save0");
+            };
+            if (R_SUCCEEDED(fsdev_wrapMountSave("save1", save_id, uid[1]))) {
+                add_device("save1");
+            };
+        };
 
         if (R_SUCCEEDED(fsdev_wrapMountSaveBcat("bcat", bcat_id))) {
             add_device("bcat");
@@ -184,10 +188,22 @@ int main(int argc, char** argv) {
             if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
                 add_device("switch");
             }
-
+            if (!fsdev_wrapMountDevice("breeze", "/switch/breeze", *sdmc, false)) {
+                add_device("breeze");
+            }
+            if (!fsdev_wrapMountDevice("cheats", "/switch/breeze/cheats", *sdmc, false)) {
+                add_device("cheats");
+            }
             if (!fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false)) {
                 add_device("contents");
             }
+            char game_cheat_dir_str[21] = {0};
+            static char game_cheat_dir_path[80] = "/switch/breeze/cheats/";
+            ini_gets("Nx", "game_cheat_dir", "", game_cheat_dir_str, sizeof(game_cheat_dir_str), INI_PATH);
+            strcat(game_cheat_dir_path,game_cheat_dir_str);
+            if (!fsdev_wrapMountDevice(game_cheat_dir_str, game_cheat_dir_path, *sdmc, false)) {
+                add_device(game_cheat_dir_str);
+            };
         }
 
         g_ftpsrv_config.devices = g_devices;
@@ -350,6 +366,8 @@ void userAppInit(void) {
 }
 
 void userAppExit(void) {
+#define BREEZE_NRO "/switch/Breeze/Breeze.nro"
+    envSetNextLoad(BREEZE_NRO, BREEZE_NRO);
     consoleExit(NULL);
     hidsysExit();
     accountExit();
