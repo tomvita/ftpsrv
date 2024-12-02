@@ -172,6 +172,7 @@ int main(void) {
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
+    g_ftpsrv_config.timeout = ini_getl("Network", "timeout", 0, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
 
     if (log_enabled) {
@@ -213,7 +214,8 @@ int main(void) {
                 iprintf(TEXT_YELLOW "user: %s" TEXT_NORMAL "\n", g_ftpsrv_config.user);
                 iprintf(TEXT_YELLOW "pass: %s" TEXT_NORMAL "\n", g_ftpsrv_config.pass);
             }
-            printf(TEXT_YELLOW "log: %d" TEXT_NORMAL "\n", log_enabled);
+            iprintf(TEXT_YELLOW "log: %d" TEXT_NORMAL "\n", log_enabled);
+            iprintf(TEXT_YELLOW "timeout: %us" TEXT_NORMAL "\n", g_ftpsrv_config.timeout);
             iprintf(TEXT_YELLOW "\nconfig: %s" TEXT_NORMAL "\n", INI_PATH);
             iprintf("\n");
             has_net = true;

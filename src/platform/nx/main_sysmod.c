@@ -35,6 +35,7 @@ int main(void) {
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
+    g_ftpsrv_config.timeout = ini_getl("Network", "timeout", 0, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
@@ -73,10 +74,15 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
+    int timeout = -1;
+    if (g_ftpsrv_config.timeout) {
+        timeout = 1000 * g_ftpsrv_config.timeout;
+    }
+
     while (1) {
         ftpsrv_init(&g_ftpsrv_config);
         while (1) {
-            if (ftpsrv_loop(-1) != FTP_API_LOOP_ERROR_OK) {
+            if (ftpsrv_loop(timeout) != FTP_API_LOOP_ERROR_OK) {
                 svcSleepThread(1000000000);
                 break;
             }

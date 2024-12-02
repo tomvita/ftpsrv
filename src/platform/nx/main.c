@@ -142,6 +142,7 @@ int main(int argc, char** argv) {
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
+    g_ftpsrv_config.timeout = ini_getl("Network", "timeout", 0, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
@@ -216,6 +217,7 @@ int main(int argc, char** argv) {
         printf(TEXT_YELLOW "user: %s" TEXT_NORMAL "\n", g_ftpsrv_config.user);
         printf(TEXT_YELLOW "pass: %s" TEXT_NORMAL "\n", g_ftpsrv_config.pass);
     }
+    printf(TEXT_YELLOW "timeout: %us" TEXT_NORMAL "\n", g_ftpsrv_config.timeout);
     printf(TEXT_YELLOW "log: %d" TEXT_NORMAL "\n", log_enabled);
     printf(TEXT_YELLOW "mount_devices: %d" TEXT_NORMAL "\n", mount_devices);
     printf(TEXT_YELLOW "\nconfig: %s" TEXT_NORMAL "\n", INI_PATH);

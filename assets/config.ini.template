@@ -19,6 +19,11 @@ anon = 0
 # ports to be opened (< 1024), however, port 21 works fine for me...
 port = 21
 
+# timeout in seconds until a session is closed.
+# if 0, then no timeout is set.
+# it is recommended to set this to an actual value, eg 20.
+timeout = 0
+
 [Log]
 # enables log output to /config/ftpsrv/log.txt
 log = 0

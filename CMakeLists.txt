@@ -38,11 +38,6 @@ check_symbol_exists(SO_KEEPALIVE
     HAVE_SO_KEEPALIVE
 )
 
-check_symbol_exists(SO_OOBINLINE
-    "sys/socket.h"
-    HAVE_SO_OOBINLINE
-)
-
 check_symbol_exists(SO_REUSEADDR
     "sys/socket.h"
     HAVE_SO_REUSEADDR
@@ -57,11 +52,6 @@ check_c_source_compiles("
     #include <unistd.h>
     int main(void) { readlink(0, 0, 0); }"
 HAVE_READLINK)
-
-check_c_source_compiles("
-    #include <sys/sendfile.h>
-    int main(void) { sendfile(0, 0, 0, 0); }"
-HAVE_SENDFILE)
 
 check_c_source_compiles("
     #include <pwd.h>
@@ -99,7 +89,6 @@ endfunction(fetch_minini)
 function(ftp_set_compile_definitions target)
     target_compile_definitions(${target} PRIVATE
         HAVE_READLINK=$<BOOL:${HAVE_READLINK}>
-        HAVE_SENDFILE=$<BOOL:${HAVE_SENDFILE}>
         HAVE_GETPWUID=$<BOOL:${HAVE_GETPWUID}>
         HAVE_GETGRGID=$<BOOL:${HAVE_GETGRGID}>
         HAVE_STRNCASECMP=$<BOOL:${HAVE_STRNCASECMP}>
@@ -107,7 +96,6 @@ function(ftp_set_compile_definitions target)
         HAVE_IPTOS_THROUGHPUT=$<BOOL:${HAVE_IPTOS_THROUGHPUT}>
         HAVE_TCP_NODELAY=$<BOOL:${HAVE_TCP_NODELAY}>
         HAVE_SO_KEEPALIVE=$<BOOL:${HAVE_SO_KEEPALIVE}>
-        HAVE_SO_OOBINLINE=$<BOOL:${HAVE_SO_OOBINLINE}>
         HAVE_SO_REUSEADDR=$<BOOL:${HAVE_SO_REUSEADDR}>
     )
 endfunction(ftp_set_compile_definitions)
@@ -137,6 +125,8 @@ function(ftp_add name)
             /W4
         >
     )
+
+    ftp_set_compile_definitions(${name})
 endfunction(ftp_add)
 
 add_library(ftpsrv src/ftpsrv.c)
@@ -218,7 +208,7 @@ elseif(NINTENDO_DS)
 
     target_compile_definitions(ftpsrv PUBLIC
         FTP_VFS_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/vfs_unistd.h"
-        FTP_SOCKET_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/unistd/socket_unistd.h"
+        FTP_SOCKET_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nds/socket_nds.h"
     )
 
     add_executable(ftpexe

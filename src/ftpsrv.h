@@ -25,7 +25,6 @@ struct FtpSrvDevice {
 };
 
 typedef void (*FtpSrvLogCallback)(enum FTP_API_LOG_TYPE, const char*);
-typedef void (*FtpSrvDebugLogCallback)(const char*, ...);
 
 struct FtpSrvConfig {
     char user[128];
@@ -38,12 +37,13 @@ struct FtpSrvConfig {
     unsigned char read_only;
     // if set, an account is required for storing files.
     unsigned char write_account_required;
+    // if set, sessions will be closed once this is elapsed.
+    unsigned timeout;
 
     const struct FtpSrvDevice* devices;
     unsigned devices_count;
 
     FtpSrvLogCallback log_callback;
-    FtpSrvDebugLogCallback debug_callback;
 };
 
 int ftpsrv_init(const struct FtpSrvConfig* cfg);

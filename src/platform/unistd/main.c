@@ -25,6 +25,7 @@ enum ArgsId {
     ArgsId_user,
     ArgsId_pass,
     ArgsId_anon,
+    ArgsId_timeout,
 };
 
 #define ARGS_ENTRY(_key, _type, _single) \
@@ -37,6 +38,7 @@ static const struct ArgsMeta ARGS_META[] = {
     ARGS_ENTRY(user, ArgsValueType_STR, 'u')
     ARGS_ENTRY(pass, ArgsValueType_STR, 'p')
     ARGS_ENTRY(anon, ArgsValueType_BOOL, 'a')
+    ARGS_ENTRY(timeout, ArgsValueType_INT, 't')
 };
 
 static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
@@ -63,6 +65,7 @@ Usage\n\n\
     -u, --user      = Set username.\n\
     -p, --pass      = Set password.\n\
     -a, --anon      = Enable anonymous login.\n\
+    -t, --timeout   = Set session timeout in seconds.\n\
     \n");
 
     return code;
@@ -93,22 +96,25 @@ int main(int argc, char** argv) {
             case ArgsId_anon:
                 ftpsrv_config.anon = true;
                 break;
+            case ArgsId_timeout:
+                ftpsrv_config.timeout = arg_data.value.i;
+                break;
         }
     }
 
     // handle error.
     if (arg_result < 0) {
         if (arg_result == ArgsResult_UNKNOWN_KEY) {
-            fprintf(stderr, "unknown arg [%s]", argv[arg_index]);
+            fprintf(stderr, "unknown arg [%s]\n", argv[arg_index]);
         }
         else if (arg_result == ArgsResult_BAD_VALUE) {
-            fprintf(stderr, "arg [--%s] had bad value type [%s]", ARGS_META[arg_data.meta_index].key, arg_data.value.s);
+            fprintf(stderr, "arg [--%s] had bad value type [%s]\n", ARGS_META[arg_data.meta_index].key, arg_data.value.s);
         }
         else if (arg_result == ArgsResult_MISSING_VALUE) {
-            fprintf(stderr, "arg [--%s] requires a value", ARGS_META[arg_data.meta_index].key);
+            fprintf(stderr, "arg [--%s] requires a value\n", ARGS_META[arg_data.meta_index].key);
         }
         else {
-            fprintf(stderr, "bad args: %d", arg_result);
+            fprintf(stderr, "bad args: %d\n", arg_result);
         }
         return print_usage(EXIT_FAILURE);
     }
@@ -134,11 +140,17 @@ int main(int argc, char** argv) {
         printf(TEXT_YELLOW "user: %s" TEXT_NORMAL "\n", ftpsrv_config.user);
         printf(TEXT_YELLOW "pass: %s" TEXT_NORMAL "\n", ftpsrv_config.pass);
     }
+    printf(TEXT_YELLOW "timeout: %us" TEXT_NORMAL "\n", ftpsrv_config.timeout);
+
+    int timeout = -1;
+    if (ftpsrv_config.timeout) {
+        timeout = 1000 * ftpsrv_config.timeout;
+    }
 
     while (1) {
         ftpsrv_init(&ftpsrv_config);
         while (1) {
-            if (ftpsrv_loop(-1) != FTP_API_LOOP_ERROR_OK) {
+            if (ftpsrv_loop(timeout) != FTP_API_LOOP_ERROR_OK) {
                 sleep(1);
                 break;
             }
