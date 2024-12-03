@@ -197,8 +197,8 @@ int main(int argc, char** argv) {
             if (!fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false)) {
                 add_device("contents");
             }
-            char game_cheat_dir_str[21] = {0};
-            static char game_cheat_dir_path[80] = "/switch/breeze/cheats/";
+            char game_cheat_dir_str[128] = {0};
+            static char game_cheat_dir_path[160] = "/switch/breeze/cheats/";
             ini_gets("Nx", "game_cheat_dir", "", game_cheat_dir_str, sizeof(game_cheat_dir_str), INI_PATH);
             strcat(game_cheat_dir_path,game_cheat_dir_str);
             if (!fsdev_wrapMountDevice(game_cheat_dir_str, game_cheat_dir_path, *sdmc, false)) {
