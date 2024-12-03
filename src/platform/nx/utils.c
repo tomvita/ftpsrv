@@ -29,7 +29,10 @@ static struct FsDevWrapEntry* find_entry(const char* path) {
 
     return NULL;
 }
-
+void commit_save(const char* path){
+    if (find_entry(path)!=NULL)
+        fsFsCommit(&(find_entry(path)->fs));
+}
 static Result mount_helper(const char* path, FsFileSystem fs) {
     if (fsdev_wrapMountDevice(path, NULL, fs, true)) {
         fsFsClose(&fs);

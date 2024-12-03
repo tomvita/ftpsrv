@@ -368,6 +368,8 @@ void userAppInit(void) {
 void userAppExit(void) {
 #define BREEZE_NRO "/switch/Breeze/Breeze.nro"
     envSetNextLoad(BREEZE_NRO, BREEZE_NRO);
+    commit_save("save0");
+    commit_save("save1");
     consoleExit(NULL);
     hidsysExit();
     accountExit();
