@@ -132,7 +132,7 @@ static int error_loop(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    consolePrint("\n[ftpsrv 0.2.0-v1 By TotalJustice, customized for Breeze by tomvita]\n\n");
+    consolePrint("\n[ftpsrv 0.2.0-v1 By TotalJustice, customized for Breeze by tomvita]\n\nChanges to game saves are applied when you press '+' to exit.\n\n");
 
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
