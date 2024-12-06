@@ -36,6 +36,7 @@ int main(void) {
     g_ftpsrv_config.timeout = ini_getl("Network", "timeout", 0, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
+    const bool mount_bis = ini_getbool("Nx", "mount_bis", 0, INI_PATH);
     const bool save_writable = ini_getbool("Nx", "save_writable", 0, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
     g_ftpsrv_config.port = ini_getl("Nx", "sys_port", g_ftpsrv_config.port, INI_PATH);
@@ -44,24 +45,13 @@ int main(void) {
         log_file_init(LOG_PATH, "ftpsrv - " FTPSRV_VERSION_HASH " - NX-sys");
     }
 
-    vfs_nx_init(mount_devices, save_writable);
-    if (mount_devices) {
-        fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand);
-        fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd);
-
-        // add some shortcuts.
-        FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
-        if (sdmc) {
-            fsdev_wrapMountDevice("switch", "/switch", *sdmc, false);
-            fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false);
-        }
-    }
-
     // exit early as this is a security risk due to ldn-mitm.
     if (!user_len && !pass_len && !g_ftpsrv_config.anon) {
         log_file_write("User / Pass / Anon not set in config!");
         return EXIT_FAILURE;
     }
+
+    vfs_nx_init(mount_devices, save_writable, mount_bis);
 
     int timeout = -1;
     if (g_ftpsrv_config.timeout) {
@@ -199,6 +189,8 @@ void __appInit(void) {
         diagAbortWithResult(rc);
     if (R_FAILED(rc = ncmInitialize()))
         diagAbortWithResult(rc);
+    if (R_FAILED(rc = setInitialize()))
+        diagAbortWithResult(rc);
 
     hidsysInitialize();
     __libnx_init_time();
@@ -210,6 +202,7 @@ void __appExit(void) {
     vfs_nx_exit();
     log_file_exit();
     hidsysExit();
+    setExit();
     ncmExit();
     accountExit();
     socketExit();

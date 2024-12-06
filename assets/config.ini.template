@@ -32,10 +32,14 @@ log = 0
 [Nx]
 # enables showing all available mount points at root "/"
 # for example, SdCard is as at "/sdmc:"
-mount_devices = 1
+mount_devices = 0
 
 # allows save data to be writable, needs mount_devices = 1
 save_writable = 0
+
+# allows for bis partitions to be mounted, needs mount_devices = 1
+# WARNING: modifying bis files can soft brick your switch!
+mount_bis = 0
 
 # uncomment to override the port for application
 # app_port = 21

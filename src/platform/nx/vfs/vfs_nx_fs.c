@@ -300,8 +300,9 @@ enum FsError {
     FsError_DbmInvalidOperation = 0x3DD402,
 };
 
-static int set_errno_and_return_minus1(Result rc) {
+int vfs_fs_set_errno(Result rc) {
     switch (rc) {
+        case FsError_TargetLocked: errno = EBUSY; break;
         case FsError_PathNotFound: errno = ENOENT; break;
         case FsError_PathAlreadyExists: errno = EEXIST; break;
         case FsError_UsableSpaceNotEnoughMmcCalibration: errno = ENOSPC; break;
@@ -341,7 +342,7 @@ static time_t fsdev_converttimetoutc(u64 timestamp)
 }
 
 #if VFS_NX_BUFFER_WRITES
-static Result flush_buffered_write(struct FtpVfsFsFile* f) {
+static Result flush_buffered_write(struct VfsFsFile* f) {
     Result rc;
     if (R_SUCCEEDED(rc = fsFileSetSize(&f->fd, f->off + f->buf_off))) {
         rc = fsFileWrite(&f->fd, f->off, f->buf, f->buf_off, FsWriteOption_None);
@@ -356,7 +357,7 @@ static int fstat_internal(FsFileSystem* fs, FsFile* file, const char nxpath[stat
     Result rc;
     s64 size;
     if (R_FAILED(rc = fsFileGetSize(file, &size))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     st->st_nlink = 1;
@@ -374,7 +375,7 @@ static int fstat_internal(FsFileSystem* fs, FsFile* file, const char nxpath[stat
     return 0;
 }
 
-int vfs_fs_internal_open(FsFileSystem* fs, struct FtpVfsFsFile* f, const char nxpath[static FS_MAX_PATH], enum FtpVfsOpenMode mode) {
+int vfs_fs_internal_open(FsFileSystem* fs, struct VfsFsFile* f, const char nxpath[static FS_MAX_PATH], enum FtpVfsOpenMode mode) {
     u32 open_mode;
     if (mode == FtpVfsOpenMode_READ) {
         open_mode = FsOpenMode_Read;
@@ -385,7 +386,7 @@ int vfs_fs_internal_open(FsFileSystem* fs, struct FtpVfsFsFile* f, const char nx
 
     Result rc;
     if (R_FAILED(rc = fsFsOpenFile(fs, nxpath, open_mode, &f->fd))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     f->off = f->chunk_size = 0;
@@ -409,21 +410,21 @@ int vfs_fs_internal_open(FsFileSystem* fs, struct FtpVfsFsFile* f, const char nx
 
 fail_close:
     fsFileClose(&f->fd);
-    return set_errno_and_return_minus1(rc);
+    return vfs_fs_set_errno(rc);
 }
 
-int vfs_fs_internal_read(struct FtpVfsFsFile* f, void* buf, size_t size) {
+int vfs_fs_internal_read(struct VfsFsFile* f, void* buf, size_t size) {
     Result rc;
     u64 bytes_read;
     if (R_FAILED(rc = fsFileRead(&f->fd, f->off, buf, size, FsReadOption_None, &bytes_read))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     f->off += bytes_read;
     return bytes_read;
 }
 
-int vfs_fs_internal_write(struct FtpVfsFsFile* f, const void* buf, size_t size) {
+int vfs_fs_internal_write(struct VfsFsFile* f, const void* buf, size_t size) {
     Result rc;
 
 #if VFS_NX_BUFFER_WRITES
@@ -435,7 +436,7 @@ int vfs_fs_internal_write(struct FtpVfsFsFile* f, const void* buf, size_t size) 
             f->buf_off += sz;
 
             if (R_FAILED(rc = flush_buffered_write(f))) {
-                return set_errno_and_return_minus1(rc);
+                return vfs_fs_set_errno(rc);
             }
 
             buf += sz;
@@ -454,12 +455,12 @@ int vfs_fs_internal_write(struct FtpVfsFsFile* f, const void* buf, size_t size) 
     if (f->chunk_size < f->off + size) {
         f->chunk_size += NX_WRITE_CHUNK_SIZE;
         if (R_FAILED(rc = fsFileSetSize(&f->fd, f->chunk_size))) {
-            return set_errno_and_return_minus1(rc);
+            return vfs_fs_set_errno(rc);
         }
     }
 
     if (R_FAILED(rc = fsFileWrite(&f->fd, f->off, buf, size, FsWriteOption_None))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     f->off += size;
@@ -467,16 +468,16 @@ int vfs_fs_internal_write(struct FtpVfsFsFile* f, const void* buf, size_t size) 
 #endif
 }
 
-int vfs_fs_internal_seek(struct FtpVfsFsFile* f, size_t off) {
+int vfs_fs_internal_seek(struct VfsFsFile* f, size_t off) {
     f->off = off;
     return 0;
 }
 
-int vfs_fs_internal_fstat(FsFileSystem* fs, struct FtpVfsFsFile* f, const char nxpath[static FS_MAX_PATH], struct stat* st) {
+int vfs_fs_internal_fstat(FsFileSystem* fs, struct VfsFsFile* f, const char nxpath[static FS_MAX_PATH], struct stat* st) {
     return fstat_internal(fs, &f->fd, nxpath, st);
 }
 
-int vfs_fs_internal_close(struct FtpVfsFsFile* f) {
+int vfs_fs_internal_close(struct VfsFsFile* f) {
     if (!vfs_fs_internal_isfile_open(f)) {
         return -1;
     }
@@ -499,25 +500,25 @@ int vfs_fs_internal_close(struct FtpVfsFsFile* f) {
     return 0;
 }
 
-int vfs_fs_internal_isfile_open(struct FtpVfsFsFile* f) {
+int vfs_fs_internal_isfile_open(struct VfsFsFile* f) {
     return f->is_valid;
 }
 
-int vfs_fs_internal_opendir(FsFileSystem* fs, struct FtpVfsFsDir* f, const char nxpath[static FS_MAX_PATH]) {
+int vfs_fs_internal_opendir(FsFileSystem* fs, struct VfsFsDir* f, const char nxpath[static FS_MAX_PATH]) {
     Result rc;
     if (R_FAILED(rc = fsFsOpenDirectory(fs, nxpath, FsDirOpenMode_ReadDirs | FsDirOpenMode_ReadFiles, &f->dir))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     f->is_valid = 1;
     return 0;
 }
 
-const char* vfs_fs_internal_readdir(struct FtpVfsFsDir* f, struct FtpVfsFsDirEntry* entry) {
+const char* vfs_fs_internal_readdir(struct VfsFsDir* f, struct VfsFsDirEntry* entry) {
     Result rc;
     s64 total_entries;
     if (R_FAILED(rc = fsDirRead(&f->dir, &total_entries, 1, &entry->buf))) {
-        set_errno_and_return_minus1(rc);
+        vfs_fs_set_errno(rc);
         return NULL;
     }
 
@@ -528,7 +529,7 @@ const char* vfs_fs_internal_readdir(struct FtpVfsFsDir* f, struct FtpVfsFsDirEnt
     return entry->buf.name;
 }
 
-int vfs_fs_internal_dirstat(FsFileSystem* fs, struct FtpVfsFsDir* f, const struct FtpVfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st) {
+int vfs_fs_internal_dirstat(FsFileSystem* fs, struct VfsFsDir* f, const struct VfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st) {
     memset(st, 0, sizeof(*st));
     st->st_nlink = 1;
 
@@ -550,11 +551,11 @@ int vfs_fs_internal_dirstat(FsFileSystem* fs, struct FtpVfsFsDir* f, const struc
     return 0;
 }
 
-int vfs_fs_internal_dirlstat(FsFileSystem* fs, struct FtpVfsFsDir* f, const struct FtpVfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st) {
+int vfs_fs_internal_dirlstat(FsFileSystem* fs, struct VfsFsDir* f, const struct VfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st) {
     return vfs_fs_internal_dirstat(fs, f, entry, nxpath, st);
 }
 
-int vfs_fs_internal_closedir(struct FtpVfsFsDir* f) {
+int vfs_fs_internal_closedir(struct VfsFsDir* f) {
     if (!vfs_fs_internal_isdir_open(f)) {
         return -1;
     }
@@ -564,7 +565,7 @@ int vfs_fs_internal_closedir(struct FtpVfsFsDir* f) {
     return 0;
 }
 
-int vfs_fs_internal_isdir_open(struct FtpVfsFsDir* f) {
+int vfs_fs_internal_isdir_open(struct VfsFsDir* f) {
     return f->is_valid;
 }
 
@@ -574,13 +575,13 @@ int vfs_fs_internal_stat(FsFileSystem* fs, const char nxpath[static FS_MAX_PATH]
     Result rc;
     FsDirEntryType type;
     if (R_FAILED(rc = fsFsGetEntryType(fs, nxpath, &type))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     if (type == FsDirEntryType_File) {
         FsFile file;
         if (R_FAILED(rc = fsFsOpenFile(fs, nxpath, FsOpenMode_Read, &file))) {
-            return set_errno_and_return_minus1(rc);
+            return vfs_fs_set_errno(rc);
         }
 
         const int rci = fstat_internal(fs, &file, nxpath, st);
@@ -601,7 +602,7 @@ int vfs_fs_internal_lstat(FsFileSystem* fs, const char nxpath[static FS_MAX_PATH
 int vfs_fs_internal_mkdir(FsFileSystem* fs, const char nxpath[static FS_MAX_PATH]) {
     Result rc;
     if (R_FAILED(rc = fsFsCreateDirectory(fs, nxpath))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     return 0;
@@ -610,7 +611,7 @@ int vfs_fs_internal_mkdir(FsFileSystem* fs, const char nxpath[static FS_MAX_PATH
 int vfs_fs_internal_unlink(FsFileSystem* fs, const char nxpath[static FS_MAX_PATH]) {
     Result rc;
     if (R_FAILED(rc = fsFsDeleteFile(fs, nxpath))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     return 0;
@@ -619,7 +620,7 @@ int vfs_fs_internal_unlink(FsFileSystem* fs, const char nxpath[static FS_MAX_PAT
 int vfs_fs_internal_rmdir(FsFileSystem* fs, const char nxpath[static FS_MAX_PATH]) {
     Result rc;
     if (R_FAILED(rc = fsFsDeleteDirectory(fs, nxpath))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     return 0;
@@ -629,16 +630,16 @@ int vfs_fs_internal_rename(FsFileSystem* fs, const char nxpath_src[static FS_MAX
     Result rc;
     FsDirEntryType type;
     if (R_FAILED(rc = fsFsGetEntryType(fs, nxpath_src, &type))) {
-        return set_errno_and_return_minus1(rc);
+        return vfs_fs_set_errno(rc);
     }
 
     if (type == FsDirEntryType_File) {
         if (R_FAILED(rc = fsFsRenameFile(fs, nxpath_src, nxpath_dst))) {
-            return set_errno_and_return_minus1(rc);
+            return vfs_fs_set_errno(rc);
         }
     } else {
         if (R_FAILED(rc = fsFsRenameDirectory(fs, nxpath_src, nxpath_dst))) {
-            return set_errno_and_return_minus1(rc);
+            return vfs_fs_set_errno(rc);
         }
     }
 
@@ -647,7 +648,8 @@ int vfs_fs_internal_rename(FsFileSystem* fs, const char nxpath_src[static FS_MAX
 
 ////////////////////
 
-int ftp_vfs_fs_open(struct FtpVfsFsFile* f, const char* path, enum FtpVfsOpenMode mode) {
+static int vfs_fs_open(void* user, const char* path, enum FtpVfsOpenMode mode) {
+    struct VfsFsFile* f = user;
     FsFileSystem* fs = NULL;
     char nxpath[FS_MAX_PATH];
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
@@ -656,19 +658,23 @@ int ftp_vfs_fs_open(struct FtpVfsFsFile* f, const char* path, enum FtpVfsOpenMod
     return vfs_fs_internal_open(fs, f, nxpath, mode);
 }
 
-int ftp_vfs_fs_read(struct FtpVfsFsFile* f, void* buf, size_t size) {
+static int vfs_fs_read(void* user, void* buf, size_t size) {
+    struct VfsFsFile* f = user;
     return vfs_fs_internal_read(f, buf, size);
 }
 
-int ftp_vfs_fs_write(struct FtpVfsFsFile* f, const void* buf, size_t size) {
+static int vfs_fs_write(void* user, const void* buf, size_t size) {
+    struct VfsFsFile* f = user;
     return vfs_fs_internal_write(f, buf, size);
 }
 
-int ftp_vfs_fs_seek(struct FtpVfsFsFile* f, size_t off) {
+static int vfs_fs_seek(void* user, size_t off) {
+    struct VfsFsFile* f = user;
     return vfs_fs_internal_seek(f, off);
 }
 
-int ftp_vfs_fs_fstat(struct FtpVfsFsFile* f, const char* path, struct stat* st) {
+static int vfs_fs_fstat(void* user, const char* path, struct stat* st) {
+    struct VfsFsFile* f = user;
     FsFileSystem* fs = NULL;
     char nxpath[FS_MAX_PATH];
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
@@ -677,18 +683,21 @@ int ftp_vfs_fs_fstat(struct FtpVfsFsFile* f, const char* path, struct stat* st) 
     return fstat_internal(fs, &f->fd, nxpath, st);
 }
 
-int ftp_vfs_fs_close(struct FtpVfsFsFile* f) {
-    if (!ftp_vfs_fs_isfile_open(f)) {
+static int vfs_fs_isfile_open(void* user) {
+    struct VfsFsFile* f = user;
+    return vfs_fs_internal_isfile_open(f);
+}
+
+static int vfs_fs_close(void* user) {
+    struct VfsFsFile* f = user;
+    if (!vfs_fs_isfile_open(f)) {
         return -1;
     }
     return vfs_fs_internal_close(f);
 }
 
-int ftp_vfs_fs_isfile_open(struct FtpVfsFsFile* f) {
-    return vfs_fs_internal_isfile_open(f);
-}
-
-int ftp_vfs_fs_opendir(struct FtpVfsFsDir* f, const char* path) {
+static int vfs_fs_opendir(void* user, const char* path) {
+    struct VfsFsDir* f = user;
     FsFileSystem* fs = NULL;
     char nxpath[FS_MAX_PATH];
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
@@ -697,11 +706,15 @@ int ftp_vfs_fs_opendir(struct FtpVfsFsDir* f, const char* path) {
     return vfs_fs_internal_opendir(fs, f, nxpath);
 }
 
-const char* ftp_vfs_fs_readdir(struct FtpVfsFsDir* f, struct FtpVfsFsDirEntry* entry) {
+const char* vfs_fs_readdir(void* user, void* user_entry) {
+    struct VfsFsDir* f = user;
+    struct VfsFsDirEntry* entry = user_entry;
     return vfs_fs_internal_readdir(f, entry);
 }
 
-int ftp_vfs_fs_dirstat(struct FtpVfsFsDir* f, const struct FtpVfsFsDirEntry* entry, const char* path, struct stat* st) {
+static int vfs_fs_dirstat(void* user, const void* user_entry, const char* path, struct stat* st) {
+    struct VfsFsDir* f = user;
+    const struct VfsFsDirEntry* entry = user_entry;
     FsFileSystem* fs = NULL;
     char nxpath[FS_MAX_PATH];
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
@@ -710,19 +723,17 @@ int ftp_vfs_fs_dirstat(struct FtpVfsFsDir* f, const struct FtpVfsFsDirEntry* ent
     return vfs_fs_internal_dirstat(fs, f, entry, nxpath, st);
 }
 
-int ftp_vfs_fs_dirlstat(struct FtpVfsFsDir* f, const struct FtpVfsFsDirEntry* entry, const char* path, struct stat* st) {
-    return ftp_vfs_fs_dirstat(f, entry, path, st);
-}
-
-int ftp_vfs_fs_closedir(struct FtpVfsFsDir* f) {
-    return vfs_fs_internal_closedir(f);
-}
-
-int ftp_vfs_fs_isdir_open(struct FtpVfsFsDir* f) {
+static int vfs_fs_isdir_open(void* user) {
+    struct VfsFsDir* f = user;
     return vfs_fs_internal_isdir_open(f);
 }
 
-int ftp_vfs_fs_stat(const char* path, struct stat* st) {
+static int vfs_fs_closedir(void* user) {
+    struct VfsFsDir* f = user;
+    return vfs_fs_internal_closedir(f);
+}
+
+static int vfs_fs_stat(const char* path, struct stat* st) {
     FsFileSystem* fs = NULL;
     char nxpath[FS_MAX_PATH];
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
@@ -731,11 +742,7 @@ int ftp_vfs_fs_stat(const char* path, struct stat* st) {
     return vfs_fs_internal_stat(fs, nxpath, st);
 }
 
-int ftp_vfs_fs_lstat(const char* path, struct stat* st) {
-    return ftp_vfs_fs_stat(path, st);
-}
-
-int ftp_vfs_fs_mkdir(const char* path) {
+static int vfs_fs_mkdir(const char* path) {
     FsFileSystem* fs = NULL;
     char nxpath[FS_MAX_PATH];
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
@@ -744,7 +751,7 @@ int ftp_vfs_fs_mkdir(const char* path) {
     return vfs_fs_internal_mkdir(fs, nxpath);
 }
 
-int ftp_vfs_fs_unlink(const char* path) {
+static int vfs_fs_unlink(const char* path) {
     FsFileSystem* fs = NULL;
     char nxpath[FS_MAX_PATH];
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
@@ -753,7 +760,7 @@ int ftp_vfs_fs_unlink(const char* path) {
     return vfs_fs_internal_unlink(fs, nxpath);
 }
 
-int ftp_vfs_fs_rmdir(const char* path) {
+static int vfs_fs_rmdir(const char* path) {
     FsFileSystem* fs = NULL;
     char nxpath[FS_MAX_PATH];
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
@@ -762,7 +769,7 @@ int ftp_vfs_fs_rmdir(const char* path) {
     return vfs_fs_internal_rmdir(fs, nxpath);
 }
 
-int ftp_vfs_fs_rename(const char* src, const char* dst) {
+static int vfs_fs_rename(const char* src, const char* dst) {
     FsFileSystem* fs = NULL;
     FsFileSystem* fs_dst = NULL;
     char nxpath_src[FS_MAX_PATH];
@@ -779,3 +786,25 @@ int ftp_vfs_fs_rename(const char* src, const char* dst) {
 
     return vfs_fs_internal_rename(fs, nxpath_src, nxpath_dst);
 }
+
+const FtpVfs g_vfs_fs = {
+    .open = vfs_fs_open,
+    .read = vfs_fs_read,
+    .write = vfs_fs_write,
+    .seek = vfs_fs_seek,
+    .fstat = vfs_fs_fstat,
+    .close = vfs_fs_close,
+    .isfile_open = vfs_fs_isfile_open,
+    .opendir = vfs_fs_opendir,
+    .readdir = vfs_fs_readdir,
+    .dirstat = vfs_fs_dirstat,
+    .dirlstat = vfs_fs_dirstat,
+    .closedir = vfs_fs_closedir,
+    .isdir_open = vfs_fs_isdir_open,
+    .stat = vfs_fs_stat,
+    .lstat = vfs_fs_stat,
+    .mkdir = vfs_fs_mkdir,
+    .unlink = vfs_fs_unlink,
+    .rmdir = vfs_fs_rmdir,
+    .rename = vfs_fs_rename,
+};

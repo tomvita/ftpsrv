@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <errno.h>
 
 #if defined(HAVE_IPTOS_THROUGHPUT) && HAVE_IPTOS_THROUGHPUT
@@ -179,6 +180,12 @@ static int strncasecmp(const char* a, const char* b, size_t len) {
     return rc;
 }
 #endif
+
+static size_t ftp_get_timestamp_ms(void) {
+    struct timeval ts;
+    gettimeofday(&ts, NULL);
+    return (ts.tv_sec * 1000000UL + ts.tv_usec) / 1000UL;
+}
 
 static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
     if (g_ftp.cfg.log_callback) {
@@ -640,6 +647,7 @@ static enum FTP_FILE_TRANSFER_STATE ftp_file_data_transfer_progress(struct FtpSe
 static void ftp_data_transfer_progress(struct FtpSession* session) {
     struct FtpTransfer* transfer = &session->transfer;
     enum FTP_FILE_TRANSFER_STATE state = FTP_FILE_TRANSFER_STATE_CONTINUE;
+    const size_t start = ftp_get_timestamp_ms();
 
     while (state == FTP_FILE_TRANSFER_STATE_CONTINUE) {
         if (transfer->mode == FTP_TRANSFER_MODE_RETR || transfer->mode == FTP_TRANSFER_MODE_STOR) {
@@ -650,6 +658,11 @@ static void ftp_data_transfer_progress(struct FtpSession* session) {
 
         if (g_ftp.cfg.progress_callback) {
             g_ftp.cfg.progress_callback();
+        }
+
+        // break out if 1ms has elapsed as to not block for too long.
+        if (ftp_get_timestamp_ms() - start >= 1) {
+            break;
         }
     }
 

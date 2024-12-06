@@ -88,10 +88,10 @@ int main(int argc, char** argv) {
                 ftpsrv_config.port = arg_data.value.i;
                 break;
             case ArgsId_user:
-                strncpy(ftpsrv_config.user, arg_data.value.s, sizeof(ftpsrv_config.user));
+                snprintf(ftpsrv_config.user, sizeof(ftpsrv_config.user), arg_data.value.s);
                 break;
             case ArgsId_pass:
-                strncpy(ftpsrv_config.pass, arg_data.value.s, sizeof(ftpsrv_config.pass));
+                snprintf(ftpsrv_config.pass, sizeof(ftpsrv_config.pass), arg_data.value.s);
                 break;
             case ArgsId_anon:
                 ftpsrv_config.anon = true;

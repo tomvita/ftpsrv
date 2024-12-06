@@ -1,5 +1,7 @@
 #include "log.h"
 #include "ftpsrv_vfs.h"
+#include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 static struct FtpVfsFile g_log_file = {0};
@@ -14,6 +16,17 @@ void log_file_write(const char* msg) {
                 ftp_vfs_write(&g_log_file, "\n", 1);
             }
         }
+    }
+}
+
+void log_file_fwrite(const char* fmt, ...) {
+    if (g_has_log_file) {
+        char buf[256];
+        va_list va;
+        va_start(va, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, va);
+        va_end(va);
+        log_file_write(buf);
     }
 }
 

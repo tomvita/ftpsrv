@@ -145,25 +145,13 @@ int main(int argc, char** argv) {
     g_ftpsrv_config.timeout = ini_getl("Network", "timeout", 0, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
+    const bool mount_bis = ini_getbool("Nx", "mount_bis", 0, INI_PATH);
     const bool save_writable = ini_getbool("Nx", "save_writable", 0, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
     g_ftpsrv_config.port = ini_getl("Nx", "app_port", g_ftpsrv_config.port, INI_PATH);
 
     if (log_enabled) {
         log_file_init(LOG_PATH, "ftpsrv - " FTPSRV_VERSION_HASH " - NX-app");
-    }
-
-    vfs_nx_init(mount_devices, save_writable);
-    if (mount_devices) {
-        fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand);
-        fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd);
-
-        // add some shortcuts.
-        FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
-        if (sdmc) {
-            fsdev_wrapMountDevice("switch", "/switch", *sdmc, false);
-            fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false);
-        }
     }
 
     if (!user_len && !pass_len && !g_ftpsrv_config.anon) {
@@ -178,6 +166,8 @@ int main(int argc, char** argv) {
     if (R_FAILED(nifmGetCurrentIpAddress(&ip))) {
         return error_loop("failed to get current ip address");
     }
+
+    vfs_nx_init(mount_devices, save_writable, mount_bis);
 
     const struct in_addr addr = {ip};
     printf(TEXT_YELLOW "ip: %s\n", inet_ntoa(addr));
@@ -228,8 +218,6 @@ int main(int argc, char** argv) {
         free(g_callback_data);
     }
 }
-
-u32 __nx_fs_num_sessions = 2;
 
 #define TCP_TX_BUF_SIZE (1024 * 64)
 #define TCP_RX_BUF_SIZE (1024 * 64)
@@ -320,9 +308,10 @@ void userAppInit(void) {
         diagAbortWithResult(rc);
     if (R_FAILED(rc = ncmInitialize()))
         diagAbortWithResult(rc);
+    if (R_FAILED(rc = setInitialize()))
+        diagAbortWithResult(rc);
     if (R_FAILED(rc = fsdev_wrapMountSdmc()))
         diagAbortWithResult(rc);
-
 
     // the below doesnt matter if they fail to init.
     hidsysInitialize();
@@ -334,7 +323,9 @@ void userAppExit(void) {
     log_file_exit();
     vfs_nx_exit();
     consoleExit(NULL);
+
     hidsysExit();
+    setExit();
     ncmExit();
     accountExit();
     socketExit();

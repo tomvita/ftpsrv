@@ -184,8 +184,63 @@ ftp_set_compile_definitions(ftpsrv)
 
 if (NINTENDO_SWITCH)
     ftp_set_options(ftpsrv 769 128 1024*64)
-    # ftp_set_options(ftpsrv 769 5 1024*16)
     fetch_minini()
+
+    set(USBHSFS_GPL ON)
+    FetchContent_Declare(libusbhsfs
+        GIT_REPOSITORY https://github.com/DarkMatterCore/libusbhsfs.git
+        GIT_TAG v0.2.9
+    )
+
+    FetchContent_MakeAvailable(libusbhsfs)
+    add_library(libusbhsfs
+        ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_drive.c
+        ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_log.c
+        ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_manager.c
+        ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_mount.c
+        ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_request.c
+        ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_scsi.c
+        ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_utils.c
+    )
+
+    target_include_directories(libusbhsfs PUBLIC ${libusbhsfs_SOURCE_DIR}/include)
+
+    # fatfs stuff
+    target_sources(libusbhsfs PRIVATE
+        ${libusbhsfs_SOURCE_DIR}/source/fatfs/diskio.c
+        ${libusbhsfs_SOURCE_DIR}/source/fatfs/ff_dev.c
+        ${libusbhsfs_SOURCE_DIR}/source/fatfs/ff.c
+        ${libusbhsfs_SOURCE_DIR}/source/fatfs/ffsystem.c
+        ${libusbhsfs_SOURCE_DIR}/source/fatfs/ffunicode.c
+    )
+
+    # sxos stuff
+    target_sources(libusbhsfs PRIVATE
+        ${libusbhsfs_SOURCE_DIR}/source/sxos/usbfs_dev.c
+        ${libusbhsfs_SOURCE_DIR}/source/sxos/usbfs.c
+    )
+
+    if (USBHSFS_GPL)
+        target_sources(libusbhsfs PRIVATE
+            ${libusbhsfs_SOURCE_DIR}/source/lwext4/ext_dev.c
+            ${libusbhsfs_SOURCE_DIR}/source/lwext4/ext_disk_io.c
+            ${libusbhsfs_SOURCE_DIR}/source/lwext4/ext.c
+
+            ${libusbhsfs_SOURCE_DIR}/source/ntfs-3g/ntfs_dev.c
+            ${libusbhsfs_SOURCE_DIR}/source/ntfs-3g/ntfs_disk_io.c
+            ${libusbhsfs_SOURCE_DIR}/source/ntfs-3g/ntfs.c
+        )
+
+        find_library(ntfs-3g_lib ntfs-3g REQUIRED)
+        find_path(ntfs-3g_inc ntfs-3g REQUIRED)
+
+        find_library(lwext4_lib lwext4 REQUIRED)
+        find_path(lwext4_inc lwext4 REQUIRED)
+
+        target_link_libraries(libusbhsfs PRIVATE ${ntfs-3g_lib} ${lwext4_lib})
+        target_include_directories(libusbhsfs PRIVATE ${ntfs-3g_inc} ${lwext4_inc} ${lwext4_inc}/lwext4)
+        target_compile_definitions(libusbhsfs PRIVATE GPL_BUILD)
+    endif()
 
     target_compile_definitions(ftpsrv PUBLIC
         FTP_VFS_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nx/vfs_nx.h"
@@ -197,7 +252,6 @@ if (NINTENDO_SWITCH)
         src/platform/nx/vfs_nx.c
         src/platform/nx/vfs/vfs_nx_root.c
         src/platform/nx/vfs/vfs_nx_fs.c
-        src/platform/nx/vfs/vfs_nx_ncm.c
         src/platform/nx/vfs/vfs_nx_save.c
         src/platform/nx/utils.c
         src/log/log.c
@@ -205,10 +259,12 @@ if (NINTENDO_SWITCH)
 
     add_executable(ftpexe
         src/platform/nx/main.c
+        src/platform/nx/vfs/vfs_nx_hdd.c
         ${NX_SRC}
     )
+    target_compile_definitions(ftpexe PUBLIC USE_USBHSFS=1)
     ftp_add(ftpexe)
-    target_link_libraries(ftpexe PRIVATE ftpsrv minIni)
+    target_link_libraries(ftpexe PRIVATE ftpsrv minIni libusbhsfs)
 
     nx_generate_nacp(
         OUTPUT ftpexe.nacp

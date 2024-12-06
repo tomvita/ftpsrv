@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 void log_file_write(const char* msg);
+void log_file_fwrite(const char* fmt, ...);
 void log_file_init(const char* path, const char* init_msg);
 void log_file_exit(void);
 
