@@ -117,6 +117,13 @@ function(ftp_add name)
         C_EXTENSIONS ON
     )
 
+    if (NINTENDO_SWITCH)
+        set_target_properties(${name} PROPERTIES
+            C_STANDARD 11
+            C_EXTENSIONS ON
+        )
+    endif()
+
     target_compile_options(${name} PRIVATE
         $<$<OR:$<C_COMPILER_ID:Clang>,$<C_COMPILER_ID:AppleClang>,$<C_COMPILER_ID:GNU>>:
             -Wall
@@ -136,6 +143,7 @@ ftp_set_compile_definitions(ftpsrv)
 
 if (NINTENDO_SWITCH)
     ftp_set_options(ftpsrv 769 128 1024*64)
+    # ftp_set_options(ftpsrv 769 5 1024*16)
     fetch_minini()
 
     target_compile_definitions(ftpsrv PUBLIC
@@ -144,11 +152,19 @@ if (NINTENDO_SWITCH)
         VFS_NX_BUFFER_WRITES=1
     )
 
-    add_executable(ftpexe
-        src/platform/nx/main.c
+    set(NX_SRC
         src/platform/nx/vfs_nx.c
+        src/platform/nx/vfs/vfs_nx_root.c
+        src/platform/nx/vfs/vfs_nx_fs.c
+        src/platform/nx/vfs/vfs_nx_ncm.c
+        src/platform/nx/vfs/vfs_nx_save.c
         src/platform/nx/utils.c
         src/log/log.c
+    )
+
+    add_executable(ftpexe
+        src/platform/nx/main.c
+        ${NX_SRC}
     )
     ftp_add(ftpexe)
     target_link_libraries(ftpexe PRIVATE ftpsrv minIni)
@@ -168,7 +184,7 @@ if (NINTENDO_SWITCH)
     add_library(ftpsrv_sysmod src/ftpsrv.c)
     target_include_directories(ftpsrv_sysmod PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     ftp_add(ftpsrv_sysmod)
-    ftp_set_options(ftpsrv_sysmod 769 6 1024*16)
+    ftp_set_options(ftpsrv_sysmod 769 5 1024*64)
 
     target_compile_definitions(ftpsrv_sysmod PUBLIC
         FTP_VFS_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nx/vfs_nx.h"
@@ -178,9 +194,7 @@ if (NINTENDO_SWITCH)
 
     add_executable(sysftp
         src/platform/nx/main_sysmod.c
-        src/platform/nx/vfs_nx.c
-        src/platform/nx/utils.c
-        src/log/log.c
+        ${NX_SRC}
     )
     ftp_add(sysftp)
     target_link_libraries(sysftp PRIVATE ftpsrv_sysmod minIni)

@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include <ftpsrv.h>
+#include <ftpsrv_vfs.h>
 #include "utils.h"
 #include "log/log.h"
 
@@ -31,8 +32,6 @@ struct CallbackData {
 static const char* INI_PATH = "/config/ftpsrv/config.ini";
 static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
-static struct FtpSrvDevice g_devices[FsDevWrap_DEVICES_MAX] = {0};
-static int g_devices_count = 0;
 static bool g_led_enabled = false;
 
 static PadState g_pad = {0};
@@ -46,12 +45,6 @@ static bool IsApplication(void) {
     return type == AppletType_Application || type == AppletType_SystemApplication;
 }
 
-static void add_device(const char* path) {
-    if (g_devices_count < FsDevWrap_DEVICES_MAX) {
-        sprintf(g_devices[g_devices_count++].mount, "%s:", path);
-    }
-}
-
 static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
     if (g_led_enabled) {
         led_flash();
@@ -63,6 +56,12 @@ static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
         g_callback_data[g_num_events-1].type = type;
         strcpy(g_callback_data[g_num_events-1].msg, msg);
     mutexUnlock(&g_mutex);
+}
+
+static void ftp_progress_callback(void) {
+    if (g_led_enabled) {
+        led_flash();
+    }
 }
 
 static void processEvents(void) {
@@ -138,6 +137,7 @@ int main(int argc, char** argv) {
     padInitializeDefault(&g_pad);
 
     g_ftpsrv_config.log_callback = ftp_log_callback;
+    g_ftpsrv_config.progress_callback = ftp_progress_callback;
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
@@ -145,54 +145,24 @@ int main(int argc, char** argv) {
     g_ftpsrv_config.timeout = ini_getl("Network", "timeout", 0, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
+    const bool save_writable = ini_getbool("Nx", "save_writable", 0, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
 
     if (log_enabled) {
         log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - NX-app");
     }
 
+    vfs_nx_init(mount_devices, save_writable);
     if (mount_devices) {
-        char save_id_str[21] = {0};
-        ini_gets("Nx", "save_application_id", "", save_id_str, sizeof(save_id_str), INI_PATH);
-
-        char bcat_id_str[21] = {0};
-        ini_gets("Nx", "bcat_application_id", "", bcat_id_str, sizeof(bcat_id_str), INI_PATH);
-
-        const u64 save_id = strtoull(save_id_str, NULL, 16);
-        const u64 bcat_id = strtoull(bcat_id_str, NULL, 16);
-
-        if (R_SUCCEEDED(fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand))) {
-            add_device("image_nand");
-        }
-        if (R_SUCCEEDED(fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd))) {
-            add_device("image_sd");
-        }
-
-        AccountUid uid;
-        if (R_SUCCEEDED(accountTrySelectUserWithoutInteraction(&uid, false))) {
-            if (R_SUCCEEDED(fsdev_wrapMountSave("save", save_id, uid))) {
-                add_device("save");
-            }
-        }
-
-        if (R_SUCCEEDED(fsdev_wrapMountSaveBcat("bcat", bcat_id))) {
-            add_device("bcat");
-        }
+        fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand);
+        fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd);
 
         // add some shortcuts.
         FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
         if (sdmc) {
-            if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
-                add_device("switch");
-            }
-
-            if (!fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false)) {
-                add_device("contents");
-            }
+            fsdev_wrapMountDevice("switch", "/switch", *sdmc, false);
+            fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false);
         }
-
-        g_ftpsrv_config.devices = g_devices;
-        g_ftpsrv_config.devices_count = g_devices_count;
     }
 
     if (!user_len && !pass_len && !g_ftpsrv_config.anon) {
@@ -217,9 +187,11 @@ int main(int argc, char** argv) {
         printf(TEXT_YELLOW "user: %s" TEXT_NORMAL "\n", g_ftpsrv_config.user);
         printf(TEXT_YELLOW "pass: %s" TEXT_NORMAL "\n", g_ftpsrv_config.pass);
     }
+    printf("\n");
     printf(TEXT_YELLOW "timeout: %us" TEXT_NORMAL "\n", g_ftpsrv_config.timeout);
     printf(TEXT_YELLOW "log: %d" TEXT_NORMAL "\n", log_enabled);
     printf(TEXT_YELLOW "mount_devices: %d" TEXT_NORMAL "\n", mount_devices);
+    printf(TEXT_YELLOW "save_writable: %d" TEXT_NORMAL "\n", save_writable);
     printf(TEXT_YELLOW "\nconfig: %s" TEXT_NORMAL "\n", INI_PATH);
     if (appletGetAppletType() == AppletType_LibraryApplet || appletGetAppletType() == AppletType_SystemApplet) {
         printf(TEXT_RED "\napplet_mode: %u" TEXT_NORMAL "\n", 1);
@@ -258,18 +230,24 @@ int main(int argc, char** argv) {
 
 u32 __nx_fs_num_sessions = 2;
 
-#define TCP_TX_BUF_SIZE (1024 * 1024 * 1)
-#define TCP_RX_BUF_SIZE (1024 * 1024 * 1)
+#define TCP_TX_BUF_SIZE (1024 * 64)
+#define TCP_RX_BUF_SIZE (1024 * 64)
 #define TCP_TX_BUF_SIZE_MAX (1024 * 1024 * 4)
 #define TCP_RX_BUF_SIZE_MAX (1024 * 1024 * 4)
 #define UDP_TX_BUF_SIZE (0)
 #define UDP_RX_BUF_SIZE (0)
 #define SB_EFFICIENCY (12)
 
+#define ALIGN_MSS(v) ((((v) + 1500 - 1) / 1500) * 1500)
+
 #define SOCKET_TMEM_SIZE \
-    ((((TCP_TX_BUF_SIZE_MAX ? TCP_TX_BUF_SIZE_MAX : TCP_TX_BUF_SIZE) \
-    + (TCP_RX_BUF_SIZE_MAX ? TCP_RX_BUF_SIZE_MAX : TCP_RX_BUF_SIZE)) \
-    + UDP_TX_BUF_SIZE + UDP_RX_BUF_SIZE + 0xFFF) &~ 0xFFF) * SB_EFFICIENCY
+    ((((( \
+      ALIGN_MSS(TCP_TX_BUF_SIZE_MAX ? TCP_TX_BUF_SIZE_MAX : TCP_TX_BUF_SIZE) \
+    + ALIGN_MSS(TCP_RX_BUF_SIZE_MAX ? TCP_RX_BUF_SIZE_MAX : TCP_RX_BUF_SIZE)) \
+    + (UDP_TX_BUF_SIZE ? ALIGN_MSS(UDP_TX_BUF_SIZE) : 0)) \
+    + (UDP_RX_BUF_SIZE ? ALIGN_MSS(UDP_RX_BUF_SIZE) : 0)) \
+    + 0xFFF) &~ 0xFFF) \
+    * SB_EFFICIENCY
 
 alignas(0x1000) static u8 SOCKET_TRANSFER_MEM[SOCKET_TMEM_SIZE];
 
@@ -339,26 +317,29 @@ void userAppInit(void) {
         diagAbortWithResult(rc);
     if (R_FAILED(rc = accountInitialize(IsApplication() ? AccountServiceType_Application : AccountServiceType_System)))
         diagAbortWithResult(rc);
+    if (R_FAILED(rc = ncmInitialize()))
+        diagAbortWithResult(rc);
     if (R_FAILED(rc = fsdev_wrapMountSdmc()))
         diagAbortWithResult(rc);
 
 
     // the below doesnt matter if they fail to init.
     hidsysInitialize();
-    appletRequestToAcquireSleepLock();
+    appletSetAutoSleepDisabled(true);
     consoleInit(NULL);
-
-    add_device("sdmc");
 }
 
 void userAppExit(void) {
+    log_file_exit();
+    vfs_nx_exit();
     consoleExit(NULL);
     hidsysExit();
+    ncmExit();
     accountExit();
     socketExit();
     bsdExit();
     nifmExit();
     fsdev_wrapUnmountAll();
-    appletReleaseSleepLock();
+    appletSetAutoSleepDisabled(false);
     appletUnlockExit();
 }

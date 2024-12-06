@@ -1,4 +1,5 @@
 #include "ftpsrv.h"
+#include <ftpsrv_vfs.h>
 #include "utils.h"
 #include "log/log.h"
 
@@ -10,8 +11,6 @@
 static const char* INI_PATH = "/config/ftpsrv/config.ini";
 static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
-static struct FtpSrvDevice g_devices[FsDevWrap_DEVICES_MAX] = {0};
-static int g_devices_count = 0;
 static bool g_led_enabled = false;
 
 static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
@@ -21,16 +20,15 @@ static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
     }
 }
 
-static void add_device(const char* path) {
-    if (g_devices_count < FsDevWrap_DEVICES_MAX) {
-        sprintf(g_devices[g_devices_count++].mount, "%s:", path);
+static void ftp_progress_callback(void) {
+    if (g_led_enabled) {
+        led_flash();
     }
 }
 
 int main(void) {
-    memset(&g_ftpsrv_config, 0, sizeof(g_ftpsrv_config));
-
     g_ftpsrv_config.log_callback = ftp_log_callback;
+    g_ftpsrv_config.progress_callback = ftp_progress_callback;
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
@@ -38,34 +36,24 @@ int main(void) {
     g_ftpsrv_config.timeout = ini_getl("Network", "timeout", 0, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
+    const bool save_writable = ini_getbool("Nx", "save_writable", 0, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
 
     if (log_enabled) {
         log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - NX-sys");
     }
 
+    vfs_nx_init(mount_devices, save_writable);
     if (mount_devices) {
-        if (R_SUCCEEDED(fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand))) {
-            add_device("image_nand");
-        }
-        if (R_SUCCEEDED(fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd))) {
-            add_device("image_sd");
-        }
+        fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand);
+        fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd);
 
         // add some shortcuts.
         FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
         if (sdmc) {
-            if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
-                add_device("switch");
-            }
-
-            if (!fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false)) {
-                add_device("contents");
-            }
+            fsdev_wrapMountDevice("switch", "/switch", *sdmc, false);
+            fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false);
         }
-
-        g_ftpsrv_config.devices = g_devices;
-        g_ftpsrv_config.devices_count = g_devices_count;
     }
 
     // exit early as this is a security risk due to ldn-mitm.
@@ -94,18 +82,28 @@ int main(void) {
 u32 __nx_applet_type = AppletType_None;
 u32 __nx_fs_num_sessions = 1;
 
-#define TCP_TX_BUF_SIZE (0x1000)
-#define TCP_RX_BUF_SIZE (0x1000)
-#define TCP_TX_BUF_SIZE_MAX (0x4000)
-#define TCP_RX_BUF_SIZE_MAX (0x4000)
+#define TCP_TX_BUF_SIZE (1024 * 4)
+#define TCP_RX_BUF_SIZE (1024 * 4)
+#define TCP_TX_BUF_SIZE_MAX (1024 * 64)
+#define TCP_RX_BUF_SIZE_MAX (1024 * 64)
 #define UDP_TX_BUF_SIZE (0)
 #define UDP_RX_BUF_SIZE (0)
-#define SB_EFFICIENCY (4)
+#define SB_EFFICIENCY (1)
+
+#define ALIGN_MSS(v) ((((v) + 1500 - 1) / 1500) * 1500)
 
 #define SOCKET_TMEM_SIZE \
-    ((((TCP_TX_BUF_SIZE_MAX ? TCP_TX_BUF_SIZE_MAX : TCP_TX_BUF_SIZE) \
-    + (TCP_RX_BUF_SIZE_MAX ? TCP_RX_BUF_SIZE_MAX : TCP_RX_BUF_SIZE)) \
-    + UDP_TX_BUF_SIZE + UDP_RX_BUF_SIZE + 0xFFF) &~ 0xFFF) * SB_EFFICIENCY
+    ((((( \
+      ALIGN_MSS(TCP_TX_BUF_SIZE_MAX ? TCP_TX_BUF_SIZE_MAX : TCP_TX_BUF_SIZE) \
+    + ALIGN_MSS(TCP_RX_BUF_SIZE_MAX ? TCP_RX_BUF_SIZE_MAX : TCP_RX_BUF_SIZE)) \
+    + (UDP_TX_BUF_SIZE ? ALIGN_MSS(UDP_TX_BUF_SIZE) : 0)) \
+    + (UDP_RX_BUF_SIZE ? ALIGN_MSS(UDP_RX_BUF_SIZE) : 0)) \
+    + 0xFFF) &~ 0xFFF) \
+    * SB_EFFICIENCY
+
+#define NUMBER_OF_SOCKETS (2)
+
+alignas(0x1000) static u8 SOCKET_TRANSFER_MEM[SOCKET_TMEM_SIZE * NUMBER_OF_SOCKETS];
 
 static u32 socketSelectVersion(void) {
     if (hosversionBefore(3,0,0)) {
@@ -157,8 +155,6 @@ void __appInit(void) {
         setsysExit();
     }
 
-    alignas(0x1000) static u8 SOCKET_TRANSFER_MEM[SOCKET_TMEM_SIZE];
-
     const SocketInitConfig socket_config = {
         .tcp_tx_buf_size     = TCP_TX_BUF_SIZE,
         .tcp_rx_buf_size     = TCP_RX_BUF_SIZE,
@@ -198,18 +194,23 @@ void __appInit(void) {
         diagAbortWithResult(rc);
     if (R_FAILED(rc = socketInitialize(&socket_config)))
         diagAbortWithResult(rc);
+    if (R_FAILED(rc = accountInitialize(AccountServiceType_System)))
+        diagAbortWithResult(rc);
+    if (R_FAILED(rc = ncmInitialize()))
+        diagAbortWithResult(rc);
 
     hidsysInitialize();
     __libnx_init_time();
     smExit(); // Close SM as we don't need it anymore.
-
-    add_device("sdmc");
 }
 
 // Service deinitialization.
 void __appExit(void) {
+    vfs_nx_exit();
     log_file_exit();
     hidsysExit();
+    ncmExit();
+    accountExit();
     socketExit();
     bsdExit();
     fsdev_wrapUnmountAll();

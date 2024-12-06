@@ -20,11 +20,8 @@ enum FTP_API_LOOP_ERROR {
     FTP_API_LOOP_ERROR_INIT, // call ftpsrv_exit and ftpsrv_init again
 };
 
-struct FtpSrvDevice {
-    char mount[32];
-};
-
 typedef void (*FtpSrvLogCallback)(enum FTP_API_LOG_TYPE, const char*);
+typedef void (*FtpSrvProgressCallback)(void);
 
 struct FtpSrvConfig {
     char user[128];
@@ -40,10 +37,8 @@ struct FtpSrvConfig {
     // if set, sessions will be closed once this is elapsed.
     unsigned timeout;
 
-    const struct FtpSrvDevice* devices;
-    unsigned devices_count;
-
     FtpSrvLogCallback log_callback;
+    FtpSrvProgressCallback progress_callback;
 };
 
 int ftpsrv_init(const struct FtpSrvConfig* cfg);

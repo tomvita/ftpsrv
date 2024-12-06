@@ -34,11 +34,8 @@ log = 0
 # for example, SdCard is as at "/sdmc:"
 mount_devices = 1
 
-# mounts the application save data, needs mount_devices = 1
-save_application_id = 0x0100F2C0115B6000
-
-# mounts the application bcat data, needs mount_devices = 1
-bcat_application_id = 0x0100F2C0115B6000
+# allows save data to be writable, needs mount_devices = 1
+save_writable = 0
 
 # enables led on the controller to light flash
 led = 0

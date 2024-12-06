@@ -7,571 +7,157 @@
 #include "utils.h"
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
 
-/*
-the read speed of transfers was really fast, even with small 16k buffers
-however the write speed was very poor, around 1.5MiB/s...
+static bool g_enabled_devices = false;
+static NcmContentStorage g_cs[2];
+static NcmContentMetaDatabase g_db[2];
 
-i performed some benchmarks by writing an empty buffer to a file
-using native fs calls:
-
-# 64k write of a 400mb file will take 83s
-# 128k write of a 400mb file will take 46s
-# 256k write of a 400mb file will take 25s
-# 512k write of a 400mb file will take 15s
-# 1mb write of a 400mb file will take 11s
-# 8mb write of a 400mb file will take 8s
-
-as we can see, 1-8MB version is substantially faster!
-for an application, we can easily afford 8MiB, so that's the end of that.
-
-with a sys-mod however, we are not so lucky as we are very much limited
-by memory!
-
-i had an idea, what if instead of buffering the write, we set update the
-file size using fsFileSetSize() and set it to a large number, say 1MiB,
-then write to 64k of data, then when > 1MiB, resize it another 1Mib.
-
-My hope with this was part of the bottleneck was the implicit calls to
-fsFileSetSize due to using append when opening the file.
-Below is my findings:
-
-# 64k write of a 400mb with fsFileSetSize() at 1mb chunks takes 29s.
-# 1mb write of a 400mb with fsFileSetSize() at 1mb chunks takes 12s.
-
-As can be seen, the setsize() version performed 2.5x better than
-the original version.
-It's still slow, but thats the cost of being memory bound.
-
-I was worried that calling setsize() with a large number for a small
-file would cause slowdown, but this doesn't prove to be the case.
-
-writing 400 64k files using setsize takes 9s, whereas without it takes
-7s, this does show there is overhead, but not much.
-*/
-
-// given the above, in my testing, 8MiB was the fastest.
-// anything above didn't improve anything, anything less slowed down.
-#define NX_WRITE_CHUNK_SIZE (1024ULL*1024ULL*1ULL)
-
-enum FsError {
-    FsError_PathNotFound = 0x202,
-    FsError_PathAlreadyExists = 0x402,
-    FsError_TargetLocked = 0xE02,
-    FsError_UsableSpaceNotEnoughMmcCalibration = 0x4602,
-    FsError_UsableSpaceNotEnoughMmcSafe = 0x4802,
-    FsError_UsableSpaceNotEnoughMmcUser = 0x4A02,
-    FsError_UsableSpaceNotEnoughMmcSystem = 0x4C02,
-    FsError_UsableSpaceNotEnoughSdCard = 0x4E02,
-    FsError_UnsupportedSdkVersion = 0x6402,
-    FsError_MountNameAlreadyExists = 0x7802,
-    FsError_PartitionNotFound = 0x7D202,
-    FsError_TargetNotFound = 0x7D402,
-    FsError_PortSdCardNoDevice = 0xFA202,
-    FsError_GameCardCardNotInserted = 0x13B002,
-    FsError_GameCardCardNotActivated = 0x13B402,
-    FsError_GameCardInvalidSecureAccess = 0x13D802,
-    FsError_GameCardInvalidNormalAccess = 0x13DA02,
-    FsError_GameCardInvalidAccessAcrossMode = 0x13DC02,
-    FsError_GameCardInitialDataMismatch = 0x13E002,
-    FsError_GameCardInitialNotFilledWithZero = 0x13E202,
-    FsError_GameCardKekIndexMismatch = 0x13E402,
-    FsError_GameCardCardHeaderReadFailure = 0x13EE02,
-    FsError_GameCardShouldTransitFromInitialToNormal = 0x145002,
-    FsError_GameCardShouldTransitFromNormalModeToSecure = 0x145202,
-    FsError_GameCardShouldTransitFromNormalModeToDebug = 0x145402,
-    FsError_GameCardSendFirmwareFailure = 0x149402,
-    FsError_GameCardReceiveCertificateFailure = 0x149A02,
-    FsError_GameCardSendSocCertificateFailure = 0x14A002,
-    FsError_GameCardReceiveRandomValueFailure = 0x14AA02,
-    FsError_GameCardSendRandomValueFailure = 0x14AC02,
-    FsError_GameCardReceiveDeviceChallengeFailure = 0x14B602,
-    FsError_GameCardRespondDeviceChallengeFailure = 0x14B802,
-    FsError_GameCardSendHostChallengeFailure = 0x14BA02,
-    FsError_GameCardReceiveChallengeResponseFailure = 0x14BC02,
-    FsError_GameCardChallengeAndResponseFailure = 0x14BE02,
-    FsError_GameCardSplGenerateRandomBytesFailure = 0x14D802,
-    FsError_GameCardReadRegisterFailure = 0x14DE02,
-    FsError_GameCardWriteRegisterFailure = 0x14E002,
-    FsError_GameCardEnableCardBusFailure = 0x14E202,
-    FsError_GameCardGetCardHeaderFailure = 0x14E402,
-    FsError_GameCardAsicStatusError = 0x14E602,
-    FsError_GameCardChangeGcModeToSecureFailure = 0x14E802,
-    FsError_GameCardChangeGcModeToDebugFailure = 0x14EA02,
-    FsError_GameCardReadRmaInfoFailure = 0x14EC02,
-    FsError_GameCardStateCardSecureModeRequired = 0x150802,
-    FsError_GameCardStateCardDebugModeRequired = 0x150A02,
-    FsError_GameCardCommandReadId1Failure = 0x155602,
-    FsError_GameCardCommandReadId2Failure = 0x155802,
-    FsError_GameCardCommandReadId3Failure = 0x155A02,
-    FsError_GameCardCommandReadPageFailure = 0x155E02,
-    FsError_GameCardCommandWritePageFailure = 0x156202,
-    FsError_GameCardCommandRefreshFailure = 0x156402,
-    FsError_GameCardCommandReadCrcFailure = 0x156C02,
-    FsError_GameCardCommandEraseFailure = 0x156E02,
-    FsError_GameCardCommandReadDevParamFailure = 0x157002,
-    FsError_GameCardCommandWriteDevParamFailure = 0x157202,
-    FsError_GameCardDebugCardReceivedIdMismatch = 0x16B002,
-    FsError_GameCardDebugCardId1Mismatch = 0x16B202,
-    FsError_GameCardDebugCardId2Mismatch = 0x16B402,
-    FsError_GameCardFsCheckHandleInGetStatusFailure = 0x171402,
-    FsError_GameCardFsCheckHandleInCreateReadOnlyFailure = 0x172002,
-    FsError_GameCardFsCheckHandleInCreateSecureReadOnlyFailure = 0x172202,
-    FsError_NotImplemented = 0x177202,
-    FsError_AlreadyExists = 0x177602,
-    FsError_OutOfRange = 0x177A02,
-    FsError_AllocationMemoryFailedInFatFileSystemA = 0x190202,
-    FsError_AllocationMemoryFailedInFatFileSystemB = 0x190402,
-    FsError_AllocationMemoryFailedInFatFileSystemC = 0x190602,
-    FsError_AllocationMemoryFailedInFatFileSystemD = 0x190802,
-    FsError_AllocationMemoryFailedInFatFileSystemE = 0x190A02,
-    FsError_AllocationMemoryFailedInFatFileSystemF = 0x190C02,
-    FsError_AllocationMemoryFailedInFatFileSystemG = 0x190E02,
-    FsError_AllocationMemoryFailedInFatFileSystemH = 0x191002,
-    FsError_AllocationMemoryFailedInSdCardA = 0x195802,
-    FsError_AllocationMemoryFailedInSdCardB = 0x195A02,
-    FsError_AllocationMemoryFailedInSystemSaveDataA = 0x195C02,
-    FsError_AllocationMemoryFailedInRomFsFileSystemA = 0x195E02,
-    FsError_AllocationMemoryFailedInRomFsFileSystemB = 0x196002,
-    FsError_AllocationMemoryFailedInRomFsFileSystemC = 0x196202,
-    FsError_AllocationMemoryFailedInSdmmcStorageServiceA = 0x1A3E02,
-    FsError_AllocationMemoryFailedInBuiltInStorageCreatorA = 0x1A4002,
-    FsError_AllocationMemoryFailedInRegisterA = 0x1A4A02,
-    FsError_IncorrectSaveDataFileSystemMagicCode = 0x21BC02,
-    FsError_InvalidAcidFileSize = 0x234202,
-    FsError_InvalidAcidSize = 0x234402,
-    FsError_InvalidAcid = 0x234602,
-    FsError_AcidVerificationFailed = 0x234802,
-    FsError_InvalidNcaSignature = 0x234A02,
-    FsError_NcaHeaderSignature1VerificationFailed = 0x234C02,
-    FsError_NcaHeaderSignature2VerificationFailed = 0x234E02,
-    FsError_NcaFsHeaderHashVerificationFailed = 0x235002,
-    FsError_InvalidNcaKeyIndex = 0x235202,
-    FsError_InvalidNcaFsHeaderEncryptionType = 0x235602,
-    FsError_InvalidNcaPatchInfoIndirectSize = 0x235802,
-    FsError_InvalidNcaPatchInfoAesCtrExSize = 0x235A02,
-    FsError_InvalidNcaPatchInfoAesCtrExOffset = 0x235C02,
-    FsError_InvalidNcaId = 0x235E02,
-    FsError_InvalidNcaHeader = 0x236002,
-    FsError_InvalidNcaFsHeader = 0x236202,
-    FsError_InvalidHierarchicalSha256BlockSize = 0x236802,
-    FsError_InvalidHierarchicalSha256LayerCount = 0x236A02,
-    FsError_HierarchicalSha256BaseStorageTooLarge = 0x236C02,
-    FsError_HierarchicalSha256HashVerificationFailed = 0x236E02,
-    FsError_InvalidSha256PartitionHashTarget = 0x244402,
-    FsError_Sha256PartitionHashVerificationFailed = 0x244602,
-    FsError_PartitionSignatureVerificationFailed = 0x244802,
-    FsError_Sha256PartitionSignatureVerificationFailed = 0x244A02,
-    FsError_InvalidPartitionEntryOffset = 0x244C02,
-    FsError_InvalidSha256PartitionMetaDataSize = 0x244E02,
-    FsError_InvalidFatFileNumber = 0x249802,
-    FsError_InvalidFatFormatBisUser = 0x249C02,
-    FsError_InvalidFatFormatBisSystem = 0x249E02,
-    FsError_InvalidFatFormatBisSafe = 0x24A002,
-    FsError_InvalidFatFormatBisCalibration = 0x24A202,
-    FsError_AesXtsFileSystemFileHeaderCorruptedOnFileOpen = 0x250E02,
-    FsError_AesXtsFileSystemFileNoHeaderOnFileOpen = 0x251002,
-    FsError_FatFsFormatUnsupportedSize = 0x280202,
-    FsError_FatFsFormatInvalidBpb = 0x280402,
-    FsError_FatFsFormatInvalidParameter = 0x280602,
-    FsError_FatFsFormatIllegalSectorsA = 0x280802,
-    FsError_FatFsFormatIllegalSectorsB = 0x280A02,
-    FsError_FatFsFormatIllegalSectorsC = 0x280C02,
-    FsError_FatFsFormatIllegalSectorsD = 0x280E02,
-    FsError_UnexpectedInMountTableA = 0x296A02,
-    FsError_TooLongPath = 0x2EE602,
-    FsError_InvalidCharacter = 0x2EE802,
-    FsError_InvalidPathFormat = 0x2EEA02,
-    FsError_DirectoryUnobtainable = 0x2EEC02,
-    FsError_InvalidOffset = 0x2F5A02,
-    FsError_InvalidSize = 0x2F5C02,
-    FsError_NullptrArgument = 0x2F5E02,
-    FsError_InvalidAlignment = 0x2F6002,
-    FsError_InvalidMountName = 0x2F6202,
-    FsError_ExtensionSizeTooLarge = 0x2F6402,
-    FsError_ExtensionSizeInvalid = 0x2F6602,
-    FsError_FileExtensionWithoutOpenModeAllowAppend = 0x307202,
-    FsError_UnsupportedCommitTarget = 0x313A02,
-    FsError_UnsupportedSetSizeForNotResizableSubStorage = 0x313C02,
-    FsError_UnsupportedSetSizeForResizableSubStorage = 0x313E02,
-    FsError_UnsupportedSetSizeForMemoryStorage = 0x314002,
-    FsError_UnsupportedOperateRangeForMemoryStorage = 0x314202,
-    FsError_UnsupportedOperateRangeForFileStorage = 0x314402,
-    FsError_UnsupportedOperateRangeForFileHandleStorage = 0x314602,
-    FsError_UnsupportedOperateRangeForSwitchStorage = 0x314802,
-    FsError_UnsupportedOperateRangeForStorageServiceObjectAdapter = 0x314A02,
-    FsError_UnsupportedWriteForAesCtrCounterExtendedStorage = 0x314C02,
-    FsError_UnsupportedSetSizeForAesCtrCounterExtendedStorage = 0x314E02,
-    FsError_UnsupportedOperateRangeForAesCtrCounterExtendedStorage = 0x315002,
-    FsError_UnsupportedWriteForAesCtrStorageExternal = 0x315202,
-    FsError_UnsupportedSetSizeForAesCtrStorageExternal = 0x315402,
-    FsError_UnsupportedSetSizeForAesCtrStorage = 0x315602,
-    FsError_UnsupportedSetSizeForHierarchicalIntegrityVerificationStorage = 0x315802,
-    FsError_UnsupportedOperateRangeForHierarchicalIntegrityVerificationStorage = 0x315A02,
-    FsError_UnsupportedSetSizeForIntegrityVerificationStorage = 0x315C02,
-    FsError_UnsupportedOperateRangeForWritableIntegrityVerificationStorage = 0x315E02,
-    FsError_UnsupportedOperateRangeForIntegrityVerificationStorage = 0x316002,
-    FsError_UnsupportedSetSizeForBlockCacheBufferedStorage = 0x316202,
-    FsError_UnsupportedOperateRangeForWritableBlockCacheBufferedStorage = 0x316402,
-    FsError_UnsupportedOperateRangeForBlockCacheBufferedStorage = 0x316602,
-    FsError_UnsupportedWriteForIndirectStorage = 0x316802,
-    FsError_UnsupportedSetSizeForIndirectStorage = 0x316A02,
-    FsError_UnsupportedOperateRangeForIndirectStorage = 0x316C02,
-    FsError_UnsupportedWriteForZeroStorage = 0x316E02,
-    FsError_UnsupportedSetSizeForZeroStorage = 0x317002,
-    FsError_UnsupportedSetSizeForHierarchicalSha256Storage = 0x317202,
-    FsError_UnsupportedWriteForReadOnlyBlockCacheStorage = 0x317402,
-    FsError_UnsupportedSetSizeForReadOnlyBlockCacheStorage = 0x317602,
-    FsError_UnsupportedSetSizeForIntegrityRomFsStorage = 0x317802,
-    FsError_UnsupportedSetSizeForDuplexStorage = 0x317A02,
-    FsError_UnsupportedOperateRangeForDuplexStorage = 0x317C02,
-    FsError_UnsupportedSetSizeForHierarchicalDuplexStorage = 0x317E02,
-    FsError_UnsupportedGetSizeForRemapStorage = 0x318002,
-    FsError_UnsupportedSetSizeForRemapStorage = 0x318202,
-    FsError_UnsupportedOperateRangeForRemapStorage = 0x318402,
-    FsError_UnsupportedSetSizeForIntegritySaveDataStorage = 0x318602,
-    FsError_UnsupportedOperateRangeForIntegritySaveDataStorage = 0x318802,
-    FsError_UnsupportedSetSizeForJournalIntegritySaveDataStorage = 0x318A02,
-    FsError_UnsupportedOperateRangeForJournalIntegritySaveDataStorage = 0x318C02,
-    FsError_UnsupportedGetSizeForJournalStorage = 0x318E02,
-    FsError_UnsupportedSetSizeForJournalStorage = 0x319002,
-    FsError_UnsupportedOperateRangeForJournalStorage = 0x319202,
-    FsError_UnsupportedSetSizeForUnionStorage = 0x319402,
-    FsError_UnsupportedSetSizeForAllocationTableStorage = 0x319602,
-    FsError_UnsupportedReadForWriteOnlyGameCardStorage = 0x319802,
-    FsError_UnsupportedSetSizeForWriteOnlyGameCardStorage = 0x319A02,
-    FsError_UnsupportedWriteForReadOnlyGameCardStorage = 0x319C02,
-    FsError_UnsupportedSetSizeForReadOnlyGameCardStorage = 0x319E02,
-    FsError_UnsupportedOperateRangeForReadOnlyGameCardStorage = 0x31A002,
-    FsError_UnsupportedSetSizeForSdmmcStorage = 0x31A202,
-    FsError_UnsupportedOperateRangeForSdmmcStorage = 0x31A402,
-    FsError_UnsupportedOperateRangeForFatFile = 0x31A602,
-    FsError_UnsupportedOperateRangeForStorageFile = 0x31A802,
-    FsError_UnsupportedSetSizeForInternalStorageConcatenationFile = 0x31AA02,
-    FsError_UnsupportedOperateRangeForInternalStorageConcatenationFile = 0x31AC02,
-    FsError_UnsupportedQueryEntryForConcatenationFileSystem = 0x31AE02,
-    FsError_UnsupportedOperateRangeForConcatenationFile = 0x31B002,
-    FsError_UnsupportedSetSizeForZeroBitmapFile = 0x31B202,
-    FsError_UnsupportedOperateRangeForFileServiceObjectAdapter = 0x31B402,
-    FsError_UnsupportedOperateRangeForAesXtsFile = 0x31B602,
-    FsError_UnsupportedWriteForRomFsFileSystem = 0x31B802,
-    FsError_UnsupportedCommitProvisionallyForRomFsFileSystem = 0x31BA02,
-    FsError_UnsupportedGetTotalSpaceSizeForRomFsFileSystem = 0x31BC02,
-    FsError_UnsupportedWriteForRomFsFile = 0x31BE02,
-    FsError_UnsupportedOperateRangeForRomFsFile = 0x31C002,
-    FsError_UnsupportedWriteForReadOnlyFileSystem = 0x31C202,
-    FsError_UnsupportedCommitProvisionallyForReadOnlyFileSystem = 0x31C402,
-    FsError_UnsupportedGetTotalSpaceSizeForReadOnlyFileSystem = 0x31C602,
-    FsError_UnsupportedWriteForReadOnlyFile = 0x31C802,
-    FsError_UnsupportedOperateRangeForReadOnlyFile = 0x31CA02,
-    FsError_UnsupportedWriteForPartitionFileSystem = 0x31CC02,
-    FsError_UnsupportedCommitProvisionallyForPartitionFileSystem = 0x31CE02,
-    FsError_UnsupportedWriteForPartitionFile = 0x31D002,
-    FsError_UnsupportedOperateRangeForPartitionFile = 0x31D202,
-    FsError_UnsupportedOperateRangeForTmFileSystemFile = 0x31D402,
-    FsError_UnsupportedWriteForSaveDataInternalStorageFileSystem = 0x31D602,
-    FsError_UnsupportedCommitProvisionallyForApplicationTemporaryFileSystem = 0x31DC02,
-    FsError_UnsupportedCommitProvisionallyForSaveDataFileSystem = 0x31DE02,
-    FsError_UnsupportedCommitProvisionallyForDirectorySaveDataFileSystem = 0x31E002,
-    FsError_UnsupportedWriteForZeroBitmapHashStorageFile = 0x31E202,
-    FsError_UnsupportedSetSizeForZeroBitmapHashStorageFile = 0x31E402,
-    FsError_NcaExternalKeyUnregisteredDeprecated = 0x326602,
-    FsError_FileNotClosed = 0x326E02,
-    FsError_DirectoryNotClosed = 0x327002,
-    FsError_WriteModeFileNotClosed = 0x327202,
-    FsError_AllocatorAlreadyRegistered = 0x327402,
-    FsError_DefaultAllocatorAlreadyUsed = 0x327602,
-    FsError_AllocatorAlignmentViolation = 0x327A02,
-    FsError_UserNotExist = 0x328202,
-    FsError_FileNotFound = 0x339402,
-    FsError_DirectoryNotFound = 0x339602,
-    FsError_MappingTableFull = 0x346402,
-    FsError_OpenCountLimit = 0x346A02,
-    FsError_MultiCommitFileSystemLimit = 0x346C02,
-    FsError_MapFull = 0x353602,
-    FsError_NotMounted = 0x35F202,
-    FsError_DbmKeyNotFound = 0x3DBC02,
-    FsError_DbmFileNotFound = 0x3DBE02,
-    FsError_DbmDirectoryNotFound = 0x3DC002,
-    FsError_DbmAlreadyExists = 0x3DC402,
-    FsError_DbmKeyFull = 0x3DC602,
-    FsError_DbmDirectoryEntryFull = 0x3DC802,
-    FsError_DbmFileEntryFull = 0x3DCA02,
-    FsError_DbmInvalidOperation = 0x3DD402,
-};
-
-static int set_errno_and_return_minus1(Result rc) {
-    switch (rc) {
-        case FsError_PathNotFound: errno = ENOENT; break;
-        case FsError_PathAlreadyExists: errno = EEXIST; break;
-        case FsError_UsableSpaceNotEnoughMmcCalibration: errno = ENOSPC; break;
-        case FsError_UsableSpaceNotEnoughMmcSafe: errno = ENOSPC; break;
-        case FsError_UsableSpaceNotEnoughMmcUser: errno = ENOSPC; break;
-        case FsError_UsableSpaceNotEnoughMmcSystem: errno = ENOSPC; break;
-        case FsError_UsableSpaceNotEnoughSdCard: errno = ENOSPC; break;
-        case FsError_OutOfRange: errno = ESPIPE; break;
-        case FsError_TooLongPath: errno = ENAMETOOLONG; break;
-        case FsError_UnsupportedWriteForReadOnlyFileSystem: errno = EROFS; break;
-        default: errno = EIO; break;
+static bool is_path(const char* path, const char* name) {
+    if (path[0] == '/') {
+        return !strncmp(path + 1, name, strlen(name));
+    } else {
+        return !strncmp(path, name, strlen(name));
     }
+}
+
+static enum VFS_TYPE get_type(const char* path) {
+    if (!g_enabled_devices) {
+        return VFS_TYPE_FS;
+    } else {
+        if (!path || !strcmp(path, "/")) {
+            return VFS_TYPE_ROOT;
+        } else if (strchr(path, ':')) {
+            if (is_path(path, "firmware:")) {
+                return VFS_TYPE_NCM;
+            }  else if (is_path(path, "save:")) {
+                return VFS_TYPE_SAVE;
+            } else {
+                return VFS_TYPE_FS;
+            }
+        }
+
+        return VFS_TYPE_NONE;
+    }
+}
+
+static const char* fix_path(const char* path, enum VFS_TYPE type) {
+    switch (type) {
+        case VFS_TYPE_NONE: return NULL;
+        case VFS_TYPE_ROOT: return "/";
+        default:
+            if (strchr(path, ':') && path[0] == '/') {
+                return path + 1;
+            }
+            return path;
+    }
+}
+
+static int set_errno_and_return_minus1(void) {
+    errno = ENOENT;
     return -1;
 }
 
-// from libnx fs_dev.c
-static time_t fsdev_converttimetoutc(u64 timestamp)
-{
-  // Parse timestamp into y/m/d h:m:s
-  time_t posixtime = (time_t)timestamp;
-  struct tm *t = gmtime(&posixtime);
-
-  // Convert time/date into an actual UTC POSIX timestamp using the system's timezone rules
-  TimeCalendarTime caltime;
-  caltime.year   = 1900 + t->tm_year;
-  caltime.month  = 1 + t->tm_mon;
-  caltime.day    = t->tm_mday;
-  caltime.hour   = t->tm_hour;
-  caltime.minute = t->tm_min;
-  caltime.second = t->tm_sec;
-  u64 new_timestamp;
-  Result rc = timeToPosixTimeWithMyRule(&caltime, &new_timestamp, 1, NULL);
-  if (R_SUCCEEDED(rc))
-    posixtime = (time_t)new_timestamp;
-
-  return posixtime;
-}
-
-#if VFS_NX_BUFFER_WRITES
-static Result flush_buffered_write(struct FtpVfsFile* f) {
-    Result rc;
-    if (R_SUCCEEDED(rc = fsFileSetSize(&f->fd, f->off + f->buf_off))) {
-        rc = fsFileWrite(&f->fd, f->off, f->buf, f->buf_off, FsWriteOption_None);
-    }
-    return rc;
-}
-#endif
-
-static int fstat_internal(FsFile* file, const char* path, struct stat* st) {
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
-    }
-
-    memset(st, 0, sizeof(*st));
-
-    Result rc;
-    s64 size;
-    if (R_FAILED(rc = fsFileGetSize(file, &size))) {
-        return set_errno_and_return_minus1(rc);
-    }
-
-    st->st_nlink = 1;
-    st->st_size = size;
-    st->st_mode = S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-    FsTimeStampRaw timestamp;
-    if (R_SUCCEEDED(fsFsGetFileTimeStampRaw(fs, nxpath, &timestamp))) {
-        if (timestamp.is_valid) {
-            st->st_ctime = fsdev_converttimetoutc(timestamp.created);
-            st->st_mtime = fsdev_converttimetoutc(timestamp.modified);
-            st->st_atime = fsdev_converttimetoutc(timestamp.accessed);
-        }
-    }
-
-    return 0;
-}
-
 int ftp_vfs_open(struct FtpVfsFile* f, const char* path, enum FtpVfsOpenMode mode) {
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
+    f->type = get_type(path);
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_open(&f->root, fix_path(path, f->type), mode);
+        case VFS_TYPE_FS: return ftp_vfs_fs_open(&f->fs, fix_path(path, f->type), mode);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_open(&f->ncm, fix_path(path, f->type), mode);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_open(&f->save, fix_path(path, f->type), mode);
     }
-
-    u32 open_mode;
-    if (mode == FtpVfsOpenMode_READ) {
-        open_mode = FsOpenMode_Read;
-    } else {
-        fsFsCreateFile(fs, nxpath, 0, 0);
-        open_mode = FsOpenMode_Write;
-    }
-
-    Result rc;
-    if (R_FAILED(rc = fsFsOpenFile(fs, nxpath, open_mode, &f->fd))) {
-        return set_errno_and_return_minus1(rc);
-    }
-
-    f->off = f->chunk_size = 0;
-#if VFS_NX_BUFFER_WRITES
-    f->buf_off = 0;
-#endif
-
-    if (mode == FtpVfsOpenMode_WRITE) {
-        if (R_FAILED(rc = fsFileSetSize(&f->fd, 0))) {
-            goto fail_close;
-        }
-    } else if (mode == FtpVfsOpenMode_APPEND) {
-        if (R_FAILED(rc = fsFileGetSize(&f->fd, &f->off))) {
-            goto fail_close;
-        }
-        f->chunk_size = f->off;
-    }
-
-    f->is_valid = true;
-    return 0;
-
-fail_close:
-    fsFileClose(&f->fd);
-    return set_errno_and_return_minus1(rc);
 }
 
 int ftp_vfs_read(struct FtpVfsFile* f, void* buf, size_t size) {
-    Result rc;
-    u64 bytes_read;
-    if (R_FAILED(rc = fsFileRead(&f->fd, f->off, buf, size, FsReadOption_None, &bytes_read))) {
-        return set_errno_and_return_minus1(rc);
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_read(&f->root, buf, size);
+        case VFS_TYPE_FS: return ftp_vfs_fs_read(&f->fs, buf, size);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_read(&f->ncm, buf, size);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_read(&f->save, buf, size);
     }
-
-    f->off += bytes_read;
-    return bytes_read;
 }
 
 int ftp_vfs_write(struct FtpVfsFile* f, const void* buf, size_t size) {
-    Result rc;
-
-#if VFS_NX_BUFFER_WRITES
-    const size_t ret = size;
-    while (size) {
-        if (f->buf_off + size > sizeof(f->buf)) {
-            const u64 sz = sizeof(f->buf) - f->buf_off;
-            memcpy(f->buf + f->buf_off, buf, sz);
-            f->buf_off += sz;
-
-            if (R_FAILED(rc = flush_buffered_write(f))) {
-                return set_errno_and_return_minus1(rc);
-            }
-
-            buf += sz;
-            size -= sz;
-            f->off += f->buf_off;
-            f->buf_off = 0;
-        } else {
-            memcpy(f->buf + f->buf_off, buf, size);
-            f->buf_off += size;
-            size = 0;
-        }
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_write(&f->root, buf, size);
+        case VFS_TYPE_FS: return ftp_vfs_fs_write(&f->fs, buf, size);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_write(&f->ncm, buf, size);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_write(&f->save, buf, size);
     }
-
-    return ret;
-#else
-    if (f->chunk_size < f->off + size) {
-        f->chunk_size += NX_WRITE_CHUNK_SIZE;
-        if (R_FAILED(rc = fsFileSetSize(&f->fd, f->chunk_size))) {
-            return set_errno_and_return_minus1(rc);
-        }
-    }
-
-    if (R_FAILED(rc = fsFileWrite(&f->fd, f->off, buf, size, FsWriteOption_None))) {
-        return set_errno_and_return_minus1(rc);
-    }
-
-    f->off += size;
-    return size;
-#endif
 }
 
 int ftp_vfs_seek(struct FtpVfsFile* f, size_t off) {
-    f->off = off;
-    return 0;
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_seek(&f->root, off);
+        case VFS_TYPE_FS: return ftp_vfs_fs_seek(&f->fs, off);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_seek(&f->ncm, off);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_seek(&f->save, off);
+    }
 }
 
 int ftp_vfs_fstat(struct FtpVfsFile* f, const char* path, struct stat* st) {
-    return fstat_internal(&f->fd, path, st);
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_fstat(&f->root, fix_path(path, f->type), st);
+        case VFS_TYPE_FS: return ftp_vfs_fs_fstat(&f->fs, fix_path(path, f->type), st);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_fstat(&f->ncm, fix_path(path, f->type), st);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_fstat(&f->save, fix_path(path, f->type), st);
+    }
 }
 
 int ftp_vfs_close(struct FtpVfsFile* f) {
-    if (!ftp_vfs_isfile_open(f)) {
-        return -1;
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_close(&f->root);
+        case VFS_TYPE_FS: return ftp_vfs_fs_close(&f->fs);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_close(&f->ncm);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_close(&f->save);
     }
-
-#if VFS_NX_BUFFER_WRITES
-    if (f->buf_off) {
-        flush_buffered_write(f);
-        if (R_SUCCEEDED(fsFileSetSize(&f->fd, f->off + f->buf_off))) {
-            fsFileWrite(&f->fd, f->off, f->buf, f->buf_off, FsWriteOption_None);
-        }
-    }
-#else
-    if (f->chunk_size) {
-        fsFileSetSize(&f->fd, f->off); // shrink
-    }
-#endif
-
-    fsFileClose(&f->fd);
-    f->is_valid = false;
-    return 0;
 }
 
 int ftp_vfs_isfile_open(struct FtpVfsFile* f) {
-    return f->is_valid;
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return 0;
+        case VFS_TYPE_ROOT: return ftp_vfs_root_isfile_open(&f->root);
+        case VFS_TYPE_FS: return ftp_vfs_fs_isfile_open(&f->fs);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_isfile_open(&f->ncm);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_isfile_open(&f->save);
+    }
 }
 
 int ftp_vfs_opendir(struct FtpVfsDir* f, const char* path) {
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
+    f->type = get_type(path);
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_opendir(&f->root, fix_path(path, f->type));
+        case VFS_TYPE_FS: return ftp_vfs_fs_opendir(&f->fs, fix_path(path, f->type));
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_opendir(&f->ncm, fix_path(path, f->type));
+        case VFS_TYPE_SAVE: return ftp_vfs_save_opendir(&f->save, fix_path(path, f->type));
     }
-
-    Result rc;
-    if (R_FAILED(rc = fsFsOpenDirectory(fs, nxpath, FsDirOpenMode_ReadDirs | FsDirOpenMode_ReadFiles, &f->dir))) {
-        return set_errno_and_return_minus1(rc);
-    }
-
-    f->is_valid = true;
-    return 0;
 }
 
 const char* ftp_vfs_readdir(struct FtpVfsDir* f, struct FtpVfsDirEntry* entry) {
-    Result rc;
-    s64 total_entries;
-    if (R_FAILED(rc = fsDirRead(&f->dir, &total_entries, 1, &entry->buf))) {
-        set_errno_and_return_minus1(rc);
-        return NULL;
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return NULL;
+        case VFS_TYPE_ROOT: return ftp_vfs_root_readdir(&f->root, &entry->root);
+        case VFS_TYPE_FS: return ftp_vfs_fs_readdir(&f->fs, &entry->fs);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_readdir(&f->ncm, &entry->ncm);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_readdir(&f->save, &entry->save);
     }
-
-    if (total_entries <= 0) {
-        return NULL;
-    }
-
-    return entry->buf.name;
 }
 
 int ftp_vfs_dirstat(struct FtpVfsDir* f, const struct FtpVfsDirEntry* entry, const char* path, struct stat* st) {
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_dirstat(&f->root, &entry->root, fix_path(path, f->type), st);
+        case VFS_TYPE_FS: return ftp_vfs_fs_dirstat(&f->fs, &entry->fs, fix_path(path, f->type), st);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_dirstat(&f->ncm, &entry->ncm, fix_path(path, f->type), st);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_dirstat(&f->save, &entry->save, fix_path(path, f->type), st);
     }
-
-    memset(st, 0, sizeof(*st));
-
-    st->st_nlink = 1;
-    if (entry->buf.type == FsDirEntryType_File) {
-        st->st_size = entry->buf.file_size;
-        st->st_mode = S_IFREG | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-        FsTimeStampRaw timestamp;
-        if (R_SUCCEEDED(fsFsGetFileTimeStampRaw(fs, nxpath, &timestamp))) {
-            if (timestamp.is_valid) {
-                st->st_ctime = fsdev_converttimetoutc(timestamp.created);
-                st->st_mtime = fsdev_converttimetoutc(timestamp.modified);
-                st->st_atime = fsdev_converttimetoutc(timestamp.accessed);
-            }
-        }
-    } else {
-        st->st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
-    }
-
-    return 0;
 }
 
 int ftp_vfs_dirlstat(struct FtpVfsDir* f, const struct FtpVfsDirEntry* entry, const char* path, struct stat* st) {
@@ -579,48 +165,43 @@ int ftp_vfs_dirlstat(struct FtpVfsDir* f, const struct FtpVfsDirEntry* entry, co
 }
 
 int ftp_vfs_closedir(struct FtpVfsDir* f) {
-    if (!ftp_vfs_isdir_open(f)) {
-        return -1;
-    }
+    const enum VFS_TYPE type = f->type;
+    f->type = VFS_TYPE_NONE;
 
-    fsDirClose(&f->dir);
-    f->is_valid = false;
-    return 0;
+    switch (type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_closedir(&f->root);
+        case VFS_TYPE_FS: return ftp_vfs_fs_closedir(&f->fs);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_closedir(&f->ncm);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_closedir(&f->save);
+    }
 }
 
 int ftp_vfs_isdir_open(struct FtpVfsDir* f) {
-    return f->is_valid;
+    switch (f->type) {
+        default: case VFS_TYPE_NONE: return 0;
+        case VFS_TYPE_ROOT: return ftp_vfs_root_isdir_open(&f->root);
+        case VFS_TYPE_FS: return ftp_vfs_fs_isdir_open(&f->fs);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_isdir_open(&f->ncm);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_isdir_open(&f->save);
+    }
 }
 
 int ftp_vfs_stat(const char* path, struct stat* st) {
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
+    enum VFS_TYPE type = get_type(path);
+    const char* dilem = strchr(path, ':');
+
+    if (type != VFS_TYPE_NONE && dilem && (!strcmp(dilem, ":") || !strcmp(dilem, ":/"))) {
+        return ftp_vfs_root_stat(path, st);
     }
 
-    memset(st, 0, sizeof(*st));
-
-    Result rc;
-    FsDirEntryType type;
-    if (R_FAILED(rc = fsFsGetEntryType(fs, nxpath, &type))) {
-        return set_errno_and_return_minus1(rc);
+    switch (type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_stat(fix_path(path, type), st);
+        case VFS_TYPE_FS: return ftp_vfs_fs_stat(fix_path(path, type), st);
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_stat(fix_path(path, type), st);
+        case VFS_TYPE_SAVE: return ftp_vfs_save_stat(fix_path(path, type), st);
     }
-
-    if (type == FsDirEntryType_File) {
-        FsFile file;
-        if (R_FAILED(rc = fsFsOpenFile(fs, nxpath, FsOpenMode_Read, &file))) {
-            return set_errno_and_return_minus1(rc);
-        }
-
-        const int rci = fstat_internal(&file, path, st);
-        fsFileClose(&file);
-        return rci;
-    } else {
-        st->st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
-    }
-
-    return 0;
 }
 
 int ftp_vfs_lstat(const char* path, struct stat* st) {
@@ -628,82 +209,53 @@ int ftp_vfs_lstat(const char* path, struct stat* st) {
 }
 
 int ftp_vfs_mkdir(const char* path) {
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
+    const enum VFS_TYPE type = get_type(path);
+    switch (type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_mkdir(fix_path(path, type));
+        case VFS_TYPE_FS: return ftp_vfs_fs_mkdir(fix_path(path, type));
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_mkdir(fix_path(path, type));
+        case VFS_TYPE_SAVE: return ftp_vfs_save_mkdir(fix_path(path, type));
     }
-
-    Result rc;
-    if (R_FAILED(rc = fsFsCreateDirectory(fs, nxpath))) {
-        return set_errno_and_return_minus1(rc);
-    }
-
-    return 0;
 }
 
 int ftp_vfs_unlink(const char* path) {
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
+    const enum VFS_TYPE type = get_type(path);
+    switch (type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_unlink(fix_path(path, type));
+        case VFS_TYPE_FS: return ftp_vfs_fs_unlink(fix_path(path, type));
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_unlink(fix_path(path, type));
+        case VFS_TYPE_SAVE: return ftp_vfs_save_unlink(fix_path(path, type));
     }
-
-    Result rc;
-    if (R_FAILED(rc = fsFsDeleteFile(fs, nxpath))) {
-        return set_errno_and_return_minus1(rc);
-    }
-
-    return 0;
 }
 
 int ftp_vfs_rmdir(const char* path) {
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
+    const enum VFS_TYPE type = get_type(path);
+    switch (type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_rmdir(fix_path(path, type));
+        case VFS_TYPE_FS: return ftp_vfs_fs_rmdir(fix_path(path, type));
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_rmdir(fix_path(path, type));
+        case VFS_TYPE_SAVE: return ftp_vfs_save_rmdir(fix_path(path, type));
     }
-
-    Result rc;
-    if (R_FAILED(rc = fsFsDeleteDirectory(fs, nxpath))) {
-        return set_errno_and_return_minus1(rc);
-    }
-
-    return 0;
 }
 
 int ftp_vfs_rename(const char* src, const char* dst) {
-    FsFileSystem* fs = NULL;
-    FsFileSystem* fs_dst = NULL;
-    char nxpath_src[FS_MAX_PATH];
-    char nxpath_dst[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(src, &fs, nxpath_src) || fsdev_wrapTranslatePath(dst, &fs_dst, nxpath_dst)) {
-        return -1;
-    }
-
-    // cannot rename across different fs.
-    if (fs != fs_dst) {
+    const enum VFS_TYPE src_type = get_type(src);
+    const enum VFS_TYPE dst_type = get_type(dst);
+    if (src_type != dst_type) {
         errno = EXDEV; // this will do for the error.
         return -1;
     }
 
-    Result rc;
-    FsDirEntryType type;
-    if (R_FAILED(rc = fsFsGetEntryType(fs, nxpath_src, &type))) {
-        return set_errno_and_return_minus1(rc);
+    switch (src_type) {
+        default: case VFS_TYPE_NONE: return set_errno_and_return_minus1();
+        case VFS_TYPE_ROOT: return ftp_vfs_root_rename(fix_path(src, src_type), fix_path(dst, dst_type));
+        case VFS_TYPE_FS: return ftp_vfs_fs_rename(fix_path(src, src_type), fix_path(dst, dst_type));
+        case VFS_TYPE_NCM: return ftp_vfs_ncm_rename(fix_path(src, src_type), fix_path(dst, dst_type));
+        case VFS_TYPE_SAVE: return ftp_vfs_save_rename(fix_path(src, src_type), fix_path(dst, dst_type));
     }
-
-    if (type == FsDirEntryType_File) {
-        if (R_FAILED(rc = fsFsRenameFile(fs, nxpath_src, nxpath_dst))) {
-            return set_errno_and_return_minus1(rc);
-        }
-    } else {
-        if (R_FAILED(rc = fsFsRenameDirectory(fs, nxpath_src, nxpath_dst))) {
-            return set_errno_and_return_minus1(rc);
-        }
-    }
-
-    return 0;
 }
 
 int ftp_vfs_readlink(const char* path, char* buf, size_t buflen) {
@@ -716,4 +268,88 @@ const char* ftp_vfs_getpwuid(const struct stat* st) {
 
 const char* ftp_vfs_getgrgid(const struct stat* st) {
     return "unknown";
+}
+
+Result get_app_name(u64 app_id, NcmContentId* id, struct AppName* name) {
+    Result rc;
+
+    for (int i = 0; i < 2; i++) {
+        NcmContentMetaKey key;
+        s32 entries_total;
+        s32 entries_written;
+        if (R_FAILED(rc = ncmContentMetaDatabaseList(&g_db[i], &entries_total, &entries_written, &key, 1, NcmContentMetaType_Application, app_id, app_id, app_id, NcmContentInstallType_Full))) {
+            // printf("failed to list ncm\n");
+            continue;
+        }
+
+        if (R_FAILED(rc = ncmContentMetaDatabaseGetContentIdByType(&g_db[i], id, &key, NcmContentType_Control))) {
+            // printf("failed to list id\n");
+            continue;
+        }
+
+        char nxpath[FS_MAX_PATH] = {0};
+        if (R_FAILED(rc = ncmContentStorageGetPath(&g_cs[i], nxpath, sizeof(nxpath), id))) {
+            // printf("failed to get path: %s \n", nxpath);
+            continue;
+        }
+
+        FsFileSystem fs;
+        if (R_FAILED(rc = fsOpenFileSystemWithId(&fs, key.id, FsFileSystemType_ContentControl, nxpath, FsContentAttributes_None))) {
+            // printf("failed to open fs: %s \n", nxpath);
+            continue;
+        }
+
+        strcpy(nxpath, "/control.nacp");
+        FsFile file;
+        if (R_FAILED(rc = fsFsOpenFile(&fs, nxpath, FsOpenMode_Read, &file))) {
+            // printf("failed to open file: %s \n", nxpath);
+            fsFsClose(&fs);
+            continue;
+        }
+
+        u64 bytes_read;
+        rc = fsFileRead(&file, 0, name->str, sizeof(name->str), 0, &bytes_read);
+        fsFileClose(&file);
+        fsFsClose(&fs);
+
+        if (R_FAILED(rc) || bytes_read != sizeof(name->str)) {
+            // printf("failed to read file: %s \n", nxpath);
+            continue;
+        }
+
+        return rc;
+    }
+
+    return rc;
+}
+
+void vfs_nx_init(bool enable_devices, bool save_writable) {
+    g_enabled_devices = enable_devices;
+    if (g_enabled_devices) {
+        for (int i = 0; i < 2; i++) {
+            ncmOpenContentStorage(&g_cs[i], NcmStorageId_SdCard - i);
+            ncmOpenContentMetaDatabase(&g_db[i], NcmStorageId_SdCard - i);
+        }
+
+        // ftp_vfs_ns_init();
+        ftp_vfs_ncm_init();
+        // ftp_vfs_gc_init();
+        ftp_vfs_save_init(save_writable);
+    }
+}
+
+void vfs_nx_exit(void) {
+    if (g_enabled_devices) {
+        // ftp_vfs_ns_exit();
+        ftp_vfs_ncm_exit();
+        // ftp_vfs_gc_exit();
+        ftp_vfs_save_exit();
+
+        for (int i = 0; i < 2; i++) {
+            ncmContentStorageClose(&g_cs[i]);
+            ncmContentMetaDatabaseClose(&g_db[i]);
+        }
+
+        g_enabled_devices = false;
+    }
 }
