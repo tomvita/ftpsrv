@@ -57,7 +57,7 @@ static void ftp_log_callback(enum FTP_API_LOG_TYPE type, const char* msg) {
 
 static int print_usage(int code) {
     printf("\
-[ftpsrv 0.2.0 By TotalJustice] \n\n\
+[ftpsrv " FTPSRV_VERSION_STR " By TotalJustice] \n\n\
 Usage\n\n\
     -h, --help      = Display help.\n\
     -v, --version   = Display version.\n\

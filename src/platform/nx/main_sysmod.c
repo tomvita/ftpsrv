@@ -41,7 +41,7 @@ int main(void) {
     g_ftpsrv_config.port = ini_getl("Nx", "sys_port", g_ftpsrv_config.port, INI_PATH);
 
     if (log_enabled) {
-        log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - NX-sys");
+        log_file_init(LOG_PATH, "ftpsrv - " FTPSRV_VERSION_HASH " - NX-sys");
     }
 
     vfs_nx_init(mount_devices, save_writable);

@@ -1,8 +1,13 @@
 cmake_minimum_required(VERSION 3.13)
 
+set(FTPSRV_VERSION_MAJOR 0)
+set(FTPSRV_VERSION_MINOR 2)
+set(FTPSRV_VERSION_PATCH 0)
+set(FTPSRV_VERSION ${FTPSRV_VERSION_MAJOR}.${FTPSRV_VERSION_MINOR}.${FTPSRV_VERSION_PATCH})
+
 project(ftpsrv
     LANGUAGES C
-    VERSION 0.2.0
+    VERSION ${FTPSRV_VERSION}
     DESCRIPTION "small and fast ftp server"
 )
 
@@ -73,6 +78,35 @@ check_c_source_compiles("
     int main(void) { strncasecmp(0, 0, 0); }"
 HAVE_STRNCASECMP)
 
+find_package(Git REQUIRED)
+
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" symbolic-ref --short HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE GIT_BRANCH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" status --porcelain
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE GIT_DIRTY
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+if (GIT_DIRTY)
+    set(FTPSRV_VERSION_HASH "${FTPSRV_VERSION} ${GIT_COMMIT}-dirty")
+else()
+    set(FTPSRV_VERSION_HASH "${FTPSRV_VERSION} ${GIT_COMMIT}-dirty")
+endif()
+
 function(fetch_minini)
     FetchContent_Declare(minIni
         GIT_REPOSITORY https://github.com/ITotalJustice/minIni-nx.git
@@ -87,17 +121,24 @@ function(fetch_minini)
 endfunction(fetch_minini)
 
 function(ftp_set_compile_definitions target)
-    target_compile_definitions(${target} PRIVATE
-        HAVE_READLINK=$<BOOL:${HAVE_READLINK}>
-        HAVE_GETPWUID=$<BOOL:${HAVE_GETPWUID}>
-        HAVE_GETGRGID=$<BOOL:${HAVE_GETGRGID}>
-        HAVE_STRNCASECMP=$<BOOL:${HAVE_STRNCASECMP}>
-        HAVE_POLL=$<BOOL:${HAVE_POLL}>
-        HAVE_IPTOS_THROUGHPUT=$<BOOL:${HAVE_IPTOS_THROUGHPUT}>
-        HAVE_TCP_NODELAY=$<BOOL:${HAVE_TCP_NODELAY}>
-        HAVE_SO_KEEPALIVE=$<BOOL:${HAVE_SO_KEEPALIVE}>
-        HAVE_SO_REUSEADDR=$<BOOL:${HAVE_SO_REUSEADDR}>
-    )
+    target_compile_definitions(${target}
+        PRIVATE
+            HAVE_READLINK=$<BOOL:${HAVE_READLINK}>
+            HAVE_GETPWUID=$<BOOL:${HAVE_GETPWUID}>
+            HAVE_GETGRGID=$<BOOL:${HAVE_GETGRGID}>
+            HAVE_STRNCASECMP=$<BOOL:${HAVE_STRNCASECMP}>
+            HAVE_POLL=$<BOOL:${HAVE_POLL}>
+            HAVE_IPTOS_THROUGHPUT=$<BOOL:${HAVE_IPTOS_THROUGHPUT}>
+            HAVE_TCP_NODELAY=$<BOOL:${HAVE_TCP_NODELAY}>
+            HAVE_SO_KEEPALIVE=$<BOOL:${HAVE_SO_KEEPALIVE}>
+            HAVE_SO_REUSEADDR=$<BOOL:${HAVE_SO_REUSEADDR}>
+        PUBLIC
+            FTPSRV_VERSION_MAJOR=${FTPSRV_VERSION_MAJOR}
+            FTPSRV_VERSION_MINOR=${FTPSRV_VERSION_MINOR}
+            FTPSRV_VERSION_PATCH=${FTPSRV_VERSION_PATCH}
+            FTPSRV_VERSION_STR="${FTPSRV_VERSION}"
+            FTPSRV_VERSION_HASH="${FTPSRV_VERSION_HASH}"
+        )
 endfunction(ftp_set_compile_definitions)
 
 function(ftp_set_options target path_size sessions buf_size)
@@ -202,6 +243,8 @@ if (NINTENDO_SWITCH)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B/flags)
 
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nx/sysftp.json ${CMAKE_CURRENT_BINARY_DIR}/sysftp.json)
+
     add_custom_command(
         TARGET ftpexe POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
@@ -214,7 +257,7 @@ if (NINTENDO_SWITCH)
 
     nx_create_exefs(sysftp
         OUTPUT 420000000000011B/exefs.nsp
-        CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nx/sysftp.json
+        CONFIG ${CMAKE_CURRENT_BINARY_DIR}/sysftp.json
     )
 elseif(NINTENDO_DS)
     ftp_set_options(ftpsrv 769 16 1024*64)

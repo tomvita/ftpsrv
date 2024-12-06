@@ -2,6 +2,6 @@
 <app version="1">
   <name>Ftpsrv</name>
   <coder>TotalJustice</coder>
-  <version>0.2.0</version>
+  <version>${FTPSRV_VERSION}</version>
   <short_description>FTP server</short_description>
 </app>

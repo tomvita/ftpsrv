@@ -45,16 +45,6 @@ int ftpsrv_init(const struct FtpSrvConfig* cfg);
 int ftpsrv_loop(int timeout_ms);
 void ftpsrv_exit(void);
 
-#if 0
-int ftpsrv_config_init(struct FtpSrvConfig* cfg);
-int ftpsrv_config_set_user(struct FtpSrvConfig* cfg, const char* user);
-int ftpsrv_config_set_pass(struct FtpSrvConfig* cfg, const char* pass);
-int ftpsrv_config_set_port(struct FtpSrvConfig* cfg, int port);
-int ftpsrv_config_set_anon(struct FtpSrvConfig* cfg, int anon);
-int ftpsrv_config_set_devices(struct FtpSrvConfig* cfg, const struct FtpSrvDevice* devices, unsigned count);
-int ftpsrv_config_set_log_callback(struct FtpSrvConfig* cfg, FtpSrvLogCallback log_callback);
-#endif
-
 #ifdef __cplusplus
 }
 #endif

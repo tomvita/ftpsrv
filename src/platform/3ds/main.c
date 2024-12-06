@@ -131,7 +131,7 @@ int main(void) {
     gfxInitDefault();
 	consoleInit(GFX_TOP, &topScreen);
 	consoleInit(GFX_BOTTOM, &bottomScreen);
-    consolePrint("\n[ftpsrv 0.2.0 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv " FTPSRV_VERSION_STR " By TotalJustice]\n\n");
 
     g_ftpsrv_config.log_callback = ftp_log_callback;
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
@@ -142,7 +142,7 @@ int main(void) {
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
 
     if (log_enabled) {
-        log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - 3DS");
+        log_file_init(LOG_PATH, "ftpsrv - " FTPSRV_VERSION_HASH " - 3DS");
     }
 
     if (!user_len && !pass_len) {

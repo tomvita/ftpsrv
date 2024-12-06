@@ -161,7 +161,7 @@ int main(void) {
 	VIDEO_WaitVSync();
 	if(rmode->viTVMode&VI_NON_INTERLACE) VIDEO_WaitVSync();
 
-    consolePrint("\n[ftpsrv 0.2.0 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv " FTPSRV_VERSION_STR " By TotalJustice]\n\n");
 
     if (!fatInitDefault()) {
         return error_loop("failed to init fat device\n");
@@ -176,7 +176,7 @@ int main(void) {
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
 
     if (log_enabled) {
-        log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - WII");
+        log_file_init(LOG_PATH, "ftpsrv - " FTPSRV_VERSION_HASH " - WII");
     }
 
     if (!user_len && !pass_len) {

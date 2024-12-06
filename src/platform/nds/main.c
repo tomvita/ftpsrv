@@ -104,7 +104,7 @@ int main(void) {
 	consoleInit(&topScreen, 3,BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
 	consoleInit(&bottomScreen, 3,BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
 
-    consolePrint("\n[ftpsrv 0.2.0 By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv " FTPSRV_VERSION_STR " By TotalJustice]\n\n");
 
     // init sd card.
     if (!fatInitDefault()) {
@@ -120,7 +120,7 @@ int main(void) {
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
 
     if (log_enabled) {
-        log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - NDS");
+        log_file_init(LOG_PATH, "ftpsrv - " FTPSRV_VERSION_HASH " - NDS");
     }
 
     if (!user_len && !pass_len) {
