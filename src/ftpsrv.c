@@ -466,6 +466,40 @@ static void ftp_data_transfer_end(struct FtpSession* session) {
     session->data_connection = FTP_DATA_CONNECTION_NONE;
 }
 
+static void ftp_data_poll(struct FtpSession* session) {
+    int rc = 0;
+
+    if (session->data_connection == FTP_DATA_CONNECTION_ACTIVE) {
+        rc = socket_connect(session->data_sock, (struct sockaddr*)&session->data_sockaddr, sizeof(session->data_sockaddr));
+        if (rc < 0) {
+            if (errno == EAGAIN || errno == EINPROGRESS || errno == EALREADY) {
+                // blocking...
+            } else if (errno == EISCONN) {
+                session->transfer.connection_pending = false;
+            } else {
+                ftp_client_msg(session, 425, "Can't open data connection, [poll] %d %s.", errno, strerror(errno));
+                ftp_data_transfer_end(session);
+            }
+        } else {
+            session->transfer.connection_pending = false;
+        }
+    } else {
+        socklen_t socklen = sizeof(session->pasv_sockaddr);
+        rc = session->data_sock = socket_accept(session->pasv_sock, (struct sockaddr*)&session->pasv_sockaddr, &socklen);
+        if (rc < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // blocking...
+            } else {
+                ftp_client_msg(session, 425, "Can't open data connection, [poll] %d %s.", errno, strerror(errno));
+                ftp_data_transfer_end(session);
+            }
+        } else {
+            ftp_set_data_socket_options(session->data_sock);
+            session->transfer.connection_pending = false;
+        }
+    }
+}
+
 static void ftp_data_open(struct FtpSession* session, enum FTP_TRANSFER_MODE mode) {
     int rc = 0;
     ftp_client_msg(session, 150, "File status okay; about to open data connection.");
@@ -484,29 +518,9 @@ static void ftp_data_open(struct FtpSession* session, enum FTP_TRANSFER_MODE mod
         session->transfer.mode = mode;
         session->transfer.index = 0;
         session->transfer.connection_pending = true;
-    }
-}
 
-static void ftp_data_poll(struct FtpSession* session) {
-    int rc = 0;
-
-    if (session->data_connection == FTP_DATA_CONNECTION_ACTIVE) {
-        rc = socket_connect(session->data_sock, (struct sockaddr*)&session->data_sockaddr, sizeof(session->data_sockaddr));
-    } else {
-        socklen_t socklen = sizeof(session->pasv_sockaddr);
-        rc = session->data_sock = socket_accept(session->pasv_sock, (struct sockaddr*)&session->pasv_sockaddr, &socklen);
-        if (rc >= 0) {
-            ftp_set_data_socket_options(session->data_sock);
-        }
-    }
-
-    if (rc < 0) {
-        if (errno != EWOULDBLOCK && errno != EAGAIN && errno != EINPROGRESS) {
-            ftp_client_msg(session, 425, "Can't open data connection, [poll] %s.", strerror(errno));
-            ftp_data_transfer_end(session);
-        }
-    } else {
-        session->transfer.connection_pending = false;
+        // try to open immediatley
+        ftp_data_poll(session);
     }
 }
 
@@ -1491,7 +1505,6 @@ int ftpsrv_loop(int timeout_ms) {
             if (session->transfer.mode != FTP_TRANSFER_MODE_NONE) {
                 // wait until the socket is ready to connect.
                 if (session->transfer.connection_pending) {
-                    fds[sd].events = POLLIN;
                     if (session->data_connection == FTP_DATA_CONNECTION_PASSIVE) {
                         fds[sd].fd = session->pasv_sock;
                         fds[sd].events = POLLIN;
