@@ -37,5 +37,11 @@ mount_devices = 1
 # allows save data to be writable, needs mount_devices = 1
 save_writable = 0
 
+# uncomment to override the port for application
+# app_port = 21
+
+# uncomment to override the port for sysmode
+# sys_port = 21
+
 # enables led on the controller to light flash
 led = 0

@@ -38,6 +38,7 @@ int main(void) {
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
     const bool save_writable = ini_getbool("Nx", "save_writable", 0, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
+    g_ftpsrv_config.port = ini_getl("Nx", "sys_port", g_ftpsrv_config.port, INI_PATH);
 
     if (log_enabled) {
         log_file_init(LOG_PATH, "ftpsrv - 0.2.0 - NX-sys");
