@@ -186,7 +186,7 @@ if (NINTENDO_SWITCH)
     ftp_set_options(ftpsrv 769 128 1024*64)
     fetch_minini()
 
-    set(USBHSFS_GPL ON)
+    set(USBHSFS_GPL OFF)
     FetchContent_Declare(libusbhsfs
         GIT_REPOSITORY https://github.com/DarkMatterCore/libusbhsfs.git
         GIT_TAG v0.2.9
