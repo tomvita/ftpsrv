@@ -473,10 +473,6 @@ int vfs_fs_internal_seek(struct VfsFsFile* f, size_t off) {
     return 0;
 }
 
-int vfs_fs_internal_fstat(FsFileSystem* fs, struct VfsFsFile* f, const char nxpath[static FS_MAX_PATH], struct stat* st) {
-    return fstat_internal(fs, &f->fd, nxpath, st);
-}
-
 int vfs_fs_internal_close(struct VfsFsFile* f) {
     if (!vfs_fs_internal_isfile_open(f)) {
         return -1;
@@ -529,7 +525,7 @@ const char* vfs_fs_internal_readdir(struct VfsFsDir* f, struct VfsFsDirEntry* en
     return entry->buf.name;
 }
 
-int vfs_fs_internal_dirstat(FsFileSystem* fs, struct VfsFsDir* f, const struct VfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st) {
+int vfs_fs_internal_dirlstat(FsFileSystem* fs, struct VfsFsDir* f, const struct VfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st) {
     memset(st, 0, sizeof(*st));
     st->st_nlink = 1;
 
@@ -549,10 +545,6 @@ int vfs_fs_internal_dirstat(FsFileSystem* fs, struct VfsFsDir* f, const struct V
     }
 
     return 0;
-}
-
-int vfs_fs_internal_dirlstat(FsFileSystem* fs, struct VfsFsDir* f, const struct VfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st) {
-    return vfs_fs_internal_dirstat(fs, f, entry, nxpath, st);
 }
 
 int vfs_fs_internal_closedir(struct VfsFsDir* f) {
@@ -668,19 +660,9 @@ static int vfs_fs_write(void* user, const void* buf, size_t size) {
     return vfs_fs_internal_write(f, buf, size);
 }
 
-static int vfs_fs_seek(void* user, size_t off) {
+static int vfs_fs_seek(void* user, const void* buf, size_t size, size_t off) {
     struct VfsFsFile* f = user;
     return vfs_fs_internal_seek(f, off);
-}
-
-static int vfs_fs_fstat(void* user, const char* path, struct stat* st) {
-    struct VfsFsFile* f = user;
-    FsFileSystem* fs = NULL;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return -1;
-    }
-    return fstat_internal(fs, &f->fd, nxpath, st);
 }
 
 static int vfs_fs_isfile_open(void* user) {
@@ -712,7 +694,7 @@ const char* vfs_fs_readdir(void* user, void* user_entry) {
     return vfs_fs_internal_readdir(f, entry);
 }
 
-static int vfs_fs_dirstat(void* user, const void* user_entry, const char* path, struct stat* st) {
+static int vfs_fs_dirlstat(void* user, const void* user_entry, const char* path, struct stat* st) {
     struct VfsFsDir* f = user;
     const struct VfsFsDirEntry* entry = user_entry;
     FsFileSystem* fs = NULL;
@@ -720,7 +702,7 @@ static int vfs_fs_dirstat(void* user, const void* user_entry, const char* path, 
     if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
         return -1;
     }
-    return vfs_fs_internal_dirstat(fs, f, entry, nxpath, st);
+    return vfs_fs_internal_dirlstat(fs, f, entry, nxpath, st);
 }
 
 static int vfs_fs_isdir_open(void* user) {
@@ -792,13 +774,11 @@ const FtpVfs g_vfs_fs = {
     .read = vfs_fs_read,
     .write = vfs_fs_write,
     .seek = vfs_fs_seek,
-    .fstat = vfs_fs_fstat,
     .close = vfs_fs_close,
     .isfile_open = vfs_fs_isfile_open,
     .opendir = vfs_fs_opendir,
     .readdir = vfs_fs_readdir,
-    .dirstat = vfs_fs_dirstat,
-    .dirlstat = vfs_fs_dirstat,
+    .dirlstat = vfs_fs_dirlstat,
     .closedir = vfs_fs_closedir,
     .isdir_open = vfs_fs_isdir_open,
     .stat = vfs_fs_stat,

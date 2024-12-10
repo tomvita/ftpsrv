@@ -253,12 +253,15 @@ if (NINTENDO_SWITCH)
         src/platform/nx/vfs/vfs_nx_root.c
         src/platform/nx/vfs/vfs_nx_fs.c
         src/platform/nx/vfs/vfs_nx_save.c
+        src/platform/nx/vfs/vfs_nx_storage.c
+        src/platform/nx/vfs/vfs_nx_gc.c
         src/platform/nx/utils.c
         src/log/log.c
     )
 
     add_executable(ftpexe
         src/platform/nx/main.c
+        src/platform/nx/vfs/vfs_nx_stdio.c
         src/platform/nx/vfs/vfs_nx_hdd.c
         ${NX_SRC}
     )

@@ -27,74 +27,37 @@ static void poll_usbhsfs(void) {
 static int vfs_hdd_open(void* user, const char* path, enum FtpVfsOpenMode mode) {
     poll_usbhsfs();
 
+    struct VfsHddFile* f = user;
     path = fix_path(path);
     if (strncmp(path, "ums", strlen("ums"))) {
         return -1;
     }
-
-    struct VfsHddFile* f = user;
-    int flags = 0, args = 0;
-
-    switch (mode) {
-        case FtpVfsOpenMode_READ:
-            flags = O_RDONLY;
-            args = 0;
-            break;
-        case FtpVfsOpenMode_WRITE:
-            flags = O_WRONLY | O_CREAT | O_TRUNC;
-            args = 0666;
-            break;
-        case FtpVfsOpenMode_APPEND:
-            flags = O_WRONLY | O_CREAT | O_APPEND;
-            args = 0666;
-            break;
-    }
-
-    f->fd = open(path, flags, args);
-    if (f->fd >= 0) {
-        f->valid = 1;
-    }
-    return f->fd;
+    return vfs_stdio_internal_open(&f->stdio_file, path, mode);
 }
 
 static int vfs_hdd_read(void* user, void* buf, size_t size) {
     struct VfsHddFile* f = user;
-    return read(f->fd, buf, size);
+    return vfs_stdio_internal_read(&f->stdio_file, buf, size);
 }
 
 static int vfs_hdd_write(void* user, const void* buf, size_t size) {
     struct VfsHddFile* f = user;
-    return write(f->fd, buf, size);
+    return vfs_stdio_internal_write(&f->stdio_file, buf, size);
 }
 
-static int vfs_hdd_seek(void* user, size_t off) {
+static int vfs_hdd_seek(void* user, const void* buf, size_t size, size_t off) {
     struct VfsHddFile* f = user;
-    return lseek(f->fd, off, SEEK_SET);
-}
-
-static int vfs_hdd_fstat(void* user, const char* path, struct stat* st) {
-    struct VfsHddFile* f = user;
-    // fstat is not available with fatfs (fat32/exfat).
-    if (fstat(f->fd, st) && errno == ENOSYS) {
-        return stat(fix_path(path), st);
-    }
-    return 0;
+    return vfs_stdio_internal_seek(&f->stdio_file, off);
 }
 
 static int vfs_hdd_isfile_open(void* user) {
     struct VfsHddFile* f = user;
-    return f->valid && f->fd >= 0;
+    return vfs_stdio_internal_isfile_open(&f->stdio_file);
 }
 
 static int vfs_hdd_close(void* user) {
     struct VfsHddFile* f = user;
-    if (!vfs_hdd_isfile_open(f)) {
-        return -1;
-    }
-    int rc = close(f->fd);
-    f->fd = -1;
-    f->valid = 0;
-    return rc;
+    return vfs_stdio_internal_close(&f->stdio_file);
 }
 
 static int vfs_hdd_opendir(void* user, const char* path) {
@@ -102,8 +65,7 @@ static int vfs_hdd_opendir(void* user, const char* path) {
     struct VfsHddDir* f = user;
     path = fix_path(path);
     if (!strncmp(path, "ums", strlen("ums"))) {
-        f->fd = opendir(path);
-        if (!f->fd) {
+        if (vfs_stdio_internal_opendir(&f->stdio_dir, path)) {
             return -1;
         }
     }
@@ -117,12 +79,8 @@ static const char* vfs_hdd_readdir(void* user, void* user_entry) {
     struct VfsHddDir* f = user;
     struct VfsHddDirEntry* entry = user_entry;
 
-    if (f->fd) {
-        entry->d = readdir(f->fd);
-        if (!entry->d) {
-            return NULL;
-        }
-        return entry->d->d_name;
+    if (vfs_stdio_internal_isdir_open(&f->stdio_dir)) {
+        return vfs_stdio_internal_readdir(&f->stdio_dir, &entry->stdio_dir);
     } else {
         if (f->index >= g_count) {
             return NULL;
@@ -131,11 +89,12 @@ static const char* vfs_hdd_readdir(void* user, void* user_entry) {
     }
 }
 
-static int vfs_hdd_dirstat(void* user, const void* user_entry, const char* path, struct stat* st) {
+static int vfs_hdd_dirlstat(void* user, const void* user_entry, const char* path, struct stat* st) {
     struct VfsHddDir* f = user;
+    const struct VfsHddDirEntry* entry = user_entry;
     path = fix_path(path);
-    if (f->fd) {
-        return stat(path, st);
+    if (vfs_stdio_internal_isdir_open(&f->stdio_dir)) {
+        return vfs_stdio_internal_dirlstat(&f->stdio_dir, &entry->stdio_dir, path, st);
     } else {
         memset(st, 0, sizeof(*st));
         st->st_nlink = 1;
@@ -154,8 +113,8 @@ static int vfs_hdd_closedir(void* user) {
     if (!vfs_hdd_isdir_open(f)) {
         return -1;
     }
-    if (f->fd) {
-        closedir(f->fd);
+    if (vfs_stdio_internal_isdir_open(&f->stdio_dir)) {
+        vfs_stdio_internal_closedir(&f->stdio_dir);
     }
     memset(f, 0, sizeof(*f));
     return 0;
@@ -174,7 +133,7 @@ static int vfs_hdd_stat(const char* path, struct stat* st) {
         st->st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
         return 0;
     } else {
-        return stat(path, st);
+        return vfs_stdio_internal_stat(path, st);
     }
 }
 
@@ -184,7 +143,7 @@ static int vfs_hdd_mkdir(const char* path) {
     if (strlen(path) <= 5 || strncmp(path, "ums", strlen("ums"))) {
         return -1;
     }
-    return mkdir(path, 0777);
+    return vfs_stdio_internal_mkdir(path);
 }
 
 static int vfs_hdd_unlink(const char* path) {
@@ -193,7 +152,7 @@ static int vfs_hdd_unlink(const char* path) {
     if (strlen(path) <= 5 || strncmp(path, "ums", strlen("ums"))) {
         return -1;
     }
-    return unlink(path);
+    return vfs_stdio_internal_unlink(path);
 }
 
 static int vfs_hdd_rmdir(const char* path) {
@@ -202,7 +161,7 @@ static int vfs_hdd_rmdir(const char* path) {
     if (strlen(path) <= 5 || strncmp(path, "ums", strlen("ums"))) {
         return -1;
     }
-    return rmdir(path);
+    return vfs_stdio_internal_rmdir(path);
 }
 
 static int vfs_hdd_rename(const char* src, const char* dst) {
@@ -217,7 +176,7 @@ static int vfs_hdd_rename(const char* src, const char* dst) {
         return -1;
     }
 
-    return rename(path_src, path_dst);
+    return vfs_stdio_internal_rename(path_src, path_dst);
 }
 
 Result vfs_hdd_init(void) {
@@ -233,13 +192,11 @@ const FtpVfs g_vfs_hdd = {
     .read = vfs_hdd_read,
     .write = vfs_hdd_write,
     .seek = vfs_hdd_seek,
-    .fstat = vfs_hdd_fstat,
     .close = vfs_hdd_close,
     .isfile_open = vfs_hdd_isfile_open,
     .opendir = vfs_hdd_opendir,
     .readdir = vfs_hdd_readdir,
-    .dirstat = vfs_hdd_dirstat,
-    .dirlstat = vfs_hdd_dirstat,
+    .dirlstat = vfs_hdd_dirlstat,
     .closedir = vfs_hdd_closedir,
     .isdir_open = vfs_hdd_isdir_open,
     .stat = vfs_hdd_stat,

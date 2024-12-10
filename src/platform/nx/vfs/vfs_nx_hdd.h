@@ -6,23 +6,23 @@
 extern "C" {
 #endif
 
+#include "vfs_nx_stdio.h"
 #include <stddef.h>
 #include <dirent.h>
 #include <switch.h>
 
 struct VfsHddFile {
-    int fd;
-    int valid;
+    struct VfsStdioFile stdio_file;
 };
 
 struct VfsHddDir {
-    DIR* fd;
+    struct VfsStdioDir stdio_dir;
     size_t index;
     bool is_valid;
 };
 
 struct VfsHddDirEntry {
-    struct dirent* d;
+    struct VfsStdioDirEntry stdio_dir;
 };
 
 struct FtpVfs;

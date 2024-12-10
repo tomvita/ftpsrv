@@ -35,13 +35,11 @@ int vfs_fs_internal_open(FsFileSystem* fs, struct VfsFsFile* f, const char nxpat
 int vfs_fs_internal_read(struct VfsFsFile* f, void* buf, size_t size);
 int vfs_fs_internal_write(struct VfsFsFile* f, const void* buf, size_t size);
 int vfs_fs_internal_seek(struct VfsFsFile* f, size_t off);
-int vfs_fs_internal_fstat(FsFileSystem* fs, struct VfsFsFile* f, const char nxpath[static FS_MAX_PATH], struct stat* st);
 int vfs_fs_internal_close(struct VfsFsFile* f);
 int vfs_fs_internal_isfile_open(struct VfsFsFile* f);
 
 int vfs_fs_internal_opendir(FsFileSystem* fs, struct VfsFsDir* f, const char nxpath[static FS_MAX_PATH]);
 const char* vfs_fs_internal_readdir(struct VfsFsDir* f, struct VfsFsDirEntry* entry);
-int vfs_fs_internal_dirstat(FsFileSystem* fs, struct VfsFsDir* f, const struct VfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st);
 int vfs_fs_internal_dirlstat(FsFileSystem* fs, struct VfsFsDir* f, const struct VfsFsDirEntry* entry, const char nxpath[static FS_MAX_PATH], struct stat* st);
 int vfs_fs_internal_closedir(struct VfsFsDir* f);
 int vfs_fs_internal_isdir_open(struct VfsFsDir* f);

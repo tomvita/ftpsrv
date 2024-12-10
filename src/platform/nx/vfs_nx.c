@@ -37,11 +37,7 @@ static int vfs_none_write(void* user, const void* buf, size_t size) {
     return set_errno_and_return_minus1();
 }
 
-static int vfs_none_seek(void* user, size_t off) {
-    return set_errno_and_return_minus1();
-}
-
-static int vfs_none_fstat(void* user, const char* path, struct stat* st) {
+static int vfs_none_seek(void* user, const void* buf, size_t size, size_t off) {
     return set_errno_and_return_minus1();
 }
 
@@ -61,7 +57,7 @@ static const char* vfs_none_readdir(void* user, void* user_entry) {
     return NULL;
 }
 
-static int vfs_none_dirstat(void* user, const void* user_entry, const char* path, struct stat* st) {
+static int vfs_none_dirlstat(void* user, const void* user_entry, const char* path, struct stat* st) {
     return set_errno_and_return_minus1();
 }
 
@@ -98,13 +94,11 @@ static const FtpVfs g_vfs_none = {
     .read = vfs_none_read,
     .write = vfs_none_write,
     .seek = vfs_none_seek,
-    .fstat = vfs_none_fstat,
     .close = vfs_none_close,
     .isfile_open = vfs_none_isfile_open,
     .opendir = vfs_none_opendir,
     .readdir = vfs_none_readdir,
-    .dirstat = vfs_none_dirstat,
-    .dirlstat = vfs_none_dirstat,
+    .dirlstat = vfs_none_dirlstat,
     .closedir = vfs_none_closedir,
     .isdir_open = vfs_none_isdir_open,
     .stat = vfs_none_stat,
@@ -120,7 +114,10 @@ static const FtpVfs* g_vfs[] = {
     [VFS_TYPE_ROOT] = &g_vfs_root,
     [VFS_TYPE_FS] = &g_vfs_fs,
     [VFS_TYPE_SAVE] = &g_vfs_save,
+    [VFS_TYPE_STORAGE] = &g_vfs_storage,
+    [VFS_TYPE_GC] = &g_vfs_gc,
 #if USE_USBHSFS
+    [VFS_TYPE_STDIO] = &g_vfs_stdio,
     [VFS_TYPE_HDD] = &g_vfs_hdd,
 #endif
 };
@@ -176,12 +173,8 @@ int ftp_vfs_write(struct FtpVfsFile* f, const void* buf, size_t size) {
     return g_vfs[f->type]->write(&f->root, buf, size);
 }
 
-int ftp_vfs_seek(struct FtpVfsFile* f, size_t off) {
-    return g_vfs[f->type]->seek(&f->root, off);
-}
-
-int ftp_vfs_fstat(struct FtpVfsFile* f, const char* path, struct stat* st) {
-    return g_vfs[f->type]->fstat(&f->root, fix_path(path, f->type), st);
+int ftp_vfs_seek(struct FtpVfsFile* f, const void* buf, size_t size, size_t off) {
+    return g_vfs[f->type]->seek(&f->root, buf, size, off);
 }
 
 int ftp_vfs_close(struct FtpVfsFile* f) {
@@ -203,12 +196,8 @@ const char* ftp_vfs_readdir(struct FtpVfsDir* f, struct FtpVfsDirEntry* entry) {
     return g_vfs[f->type]->readdir(&f->root, &entry->root);
 }
 
-int ftp_vfs_dirstat(struct FtpVfsDir* f, const struct FtpVfsDirEntry* entry, const char* path, struct stat* st) {
-    return g_vfs[f->type]->dirstat(&f->root, &entry->root, fix_path(path, f->type), st);
-}
-
 int ftp_vfs_dirlstat(struct FtpVfsDir* f, const struct FtpVfsDirEntry* entry, const char* path, struct stat* st) {
-    return ftp_vfs_dirstat(f, entry, path, st);
+    return g_vfs[f->type]->dirlstat(&f->root, &entry->root, fix_path(path, f->type), st);
 }
 
 int ftp_vfs_closedir(struct FtpVfsDir* f) {
@@ -294,63 +283,78 @@ static const u32 g_nacpLanguageTable[15] = {
 
 static u8 g_lang_index;
 
+Result get_app_name2(u64 app_id, NcmContentMetaDatabase* db, NcmContentStorage* cs, NcmContentId* id, struct AppName* name) {
+    Result rc;
+    NcmContentMetaKey key;
+    s32 entries_total;
+    s32 entries_written;
+    if (R_FAILED(rc = ncmContentMetaDatabaseList(db, &entries_total, &entries_written, &key, 1, NcmContentMetaType_Application, app_id, 0, UINT64_MAX, NcmContentInstallType_Full))) {
+        return rc;
+    }
+
+    if (R_FAILED(rc = ncmContentMetaDatabaseGetContentIdByType(db, id, &key, NcmContentType_Control))) {
+        return rc;
+    }
+
+    char nxpath[FS_MAX_PATH];
+    if (R_FAILED(rc = ncmContentStorageGetPath(cs, nxpath, sizeof(nxpath), id))) {
+        return rc;
+    }
+
+    FsFileSystem fs;
+    if (R_FAILED(rc = fsOpenFileSystemWithId(&fs, key.id, FsFileSystemType_ContentControl, nxpath, FsContentAttributes_All))) {
+        return rc;
+    }
+
+    strcpy(nxpath, "/control.nacp");
+    FsFile file;
+    if (R_FAILED(rc = fsFsOpenFile(&fs, nxpath, FsOpenMode_Read, &file))) {
+        fsFsClose(&fs);
+        return rc;
+    }
+
+    name->str[0] = '\0';
+    s64 off = g_lang_index * sizeof(NacpLanguageEntry);
+    u64 bytes_read;
+    rc = fsFileRead(&file, off, name->str, sizeof(name->str), 0, &bytes_read);
+    if (name->str[0] == '\0') {
+        for (int i = 0; i < 16; i++) {
+            off = i * sizeof(NacpLanguageEntry);
+            rc = fsFileRead(&file, off, name->str, sizeof(name->str), 0, &bytes_read);
+            if (name->str[0] != '\0') {
+                break;
+            }
+        }
+    }
+
+    fsFileClose(&file);
+    fsFsClose(&fs);
+    return rc;
+}
+
 Result get_app_name(u64 app_id, NcmContentId* id, struct AppName* name) {
     Result rc;
 
     for (int i = 0; i < NCM_SIZE; i++) {
-        NcmContentMetaKey key;
-        s32 entries_total;
-        s32 entries_written;
-        if (R_FAILED(rc = ncmContentMetaDatabaseList(&g_db[i], &entries_total, &entries_written, &key, 1, NcmContentMetaType_Application, app_id, 0, UINT64_MAX, NcmContentInstallType_Full))) {
-            continue;
+        if (R_SUCCEEDED(rc = get_app_name2(app_id, &g_db[i], &g_cs[i], id, name))) {
+            return rc;
         }
-
-        if (R_FAILED(rc = ncmContentMetaDatabaseGetContentIdByType(&g_db[i], id, &key, NcmContentType_Control))) {
-            continue;
-        }
-
-        char nxpath[FS_MAX_PATH] = {0};
-        if (R_FAILED(rc = ncmContentStorageGetPath(&g_cs[i], nxpath, sizeof(nxpath), id))) {
-            continue;
-        }
-
-        FsFileSystem fs;
-        if (R_FAILED(rc = fsOpenFileSystemWithId(&fs, key.id, FsFileSystemType_ContentControl, nxpath, FsContentAttributes_All))) {
-            continue;
-        }
-
-        strcpy(nxpath, "/control.nacp");
-        FsFile file;
-        if (R_FAILED(rc = fsFsOpenFile(&fs, nxpath, FsOpenMode_Read, &file))) {
-            fsFsClose(&fs);
-            continue;
-        }
-
-        name->str[0] = '\0';
-        s64 off = g_lang_index * sizeof(NacpLanguageEntry);
-        u64 bytes_read;
-        rc = fsFileRead(&file, off, name->str, sizeof(name->str), 0, &bytes_read);
-        if (name->str[0] == '\0') {
-            for (int i = 0; i < 16; i++) {
-                off = i * sizeof(NacpLanguageEntry);
-                rc = fsFileRead(&file, off, name->str, sizeof(name->str), 0, &bytes_read);
-                if (name->str[0] != '\0') {
-                    break;
-                }
-            }
-        }
-        fsFileClose(&file);
-        fsFsClose(&fs);
-
-        if (R_FAILED(rc) || bytes_read != sizeof(name->str)) {
-            continue;
-        }
-
-        return rc;
     }
 
     return rc;
 }
+
+struct MountEntry {
+    const char* name;
+    FsBisPartitionId id;
+};
+
+static const struct MountEntry BIS_NAMES[] = {
+    { "bis_calibration_file", FsBisPartitionId_CalibrationFile },
+    { "bis_safe_mode", FsBisPartitionId_SafeMode },
+    { "bis_user", FsBisPartitionId_User },
+    { "bis_system", FsBisPartitionId_System },
+};
 
 void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
     g_enabled_devices = enable_devices;
@@ -374,23 +378,53 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
 
         vfs_nx_add_device("sdmc", VFS_TYPE_FS);
 
-        if (!fsdev_wrapMountImage("image_nand", FsImageDirectoryId_Nand)) {
-            vfs_nx_add_device("image_nand", VFS_TYPE_FS);
+        if (!fsdev_wrapMountImage("album_nand", FsImageDirectoryId_Nand)) {
+            vfs_nx_add_device("album_nand", VFS_TYPE_FS);
         }
-        if (!fsdev_wrapMountImage("image_sd", FsImageDirectoryId_Sd)) {
-            vfs_nx_add_device("image_sd", VFS_TYPE_FS);
+        if (!fsdev_wrapMountImage("album_sd", FsImageDirectoryId_Sd)) {
+            vfs_nx_add_device("album_sd", VFS_TYPE_FS);
         }
 
+        // bis storage
+        vfs_storage_init();
+        vfs_nx_add_device("bis", VFS_TYPE_STORAGE);
+
+        // bis fs
         if (mount_bis) {
-            if (!fsdev_wrapMountBis("bis_system", FsBisPartitionId_System)) {
-                vfs_nx_add_device("bis_system", VFS_TYPE_FS);
+            for (int i = 0; i < ARRAY_SIZE(BIS_NAMES); i++) {
+                if (!fsdev_wrapMountBis(BIS_NAMES[i].name, BIS_NAMES[i].id)) {
+                    vfs_nx_add_device(BIS_NAMES[i].name, VFS_TYPE_FS);
+                }
             }
-            if (!fsdev_wrapMountBis("bis_safe", FsBisPartitionId_SafeMode)) {
-                vfs_nx_add_device("bis_safe", VFS_TYPE_FS);
-            }
-            if (!fsdev_wrapMountBis("bis_user", FsBisPartitionId_User)) {
-                vfs_nx_add_device("bis_user", VFS_TYPE_FS);
-            }
+        }
+
+        // content storage
+        FsFileSystem fs;
+        if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_System))) {
+            fsdev_wrapMountDevice("content_system", NULL, fs, true);
+            vfs_nx_add_device("content_system", VFS_TYPE_FS);
+        }
+        if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_User))) {
+            fsdev_wrapMountDevice("content_user", NULL, fs, true);
+            vfs_nx_add_device("content_user", VFS_TYPE_FS);
+        }
+        if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_SdCard))) {
+            fsdev_wrapMountDevice("content_sdcard", NULL, fs, true);
+            vfs_nx_add_device("content_sdcard", VFS_TYPE_FS);
+        }
+        if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_System0))) {
+            fsdev_wrapMountDevice("content_system0", NULL, fs, true);
+            vfs_nx_add_device("content_system0", VFS_TYPE_FS);
+        }
+
+        // custom storage
+        if (R_SUCCEEDED(fsOpenCustomStorageFileSystem(&fs, FsCustomStorageId_System))) {
+            fsdev_wrapMountDevice("custom_system", NULL, fs, true);
+            vfs_nx_add_device("custom_system", VFS_TYPE_FS);
+        }
+        if (R_SUCCEEDED(fsOpenCustomStorageFileSystem(&fs, FsCustomStorageId_SdCard))) {
+            fsdev_wrapMountDevice("custom_sd", NULL, fs, true);
+            vfs_nx_add_device("custom_sd", VFS_TYPE_FS);
         }
 
         // add some shortcuts.
@@ -399,16 +433,29 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
             if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
                 vfs_nx_add_device("switch", VFS_TYPE_FS);
             }
-            if (!fsdev_wrapMountDevice("contents", "/atmosphere/contents", *sdmc, false)) {
-                vfs_nx_add_device("contents", VFS_TYPE_FS);
+            if (!fsdev_wrapMountDevice("atmosphere_contents", "/atmosphere/contents", *sdmc, false)) {
+                vfs_nx_add_device("atmosphere_contents", VFS_TYPE_FS);
             }
+        }
+
+        if (R_SUCCEEDED(vfs_gc_init())) {
+            vfs_nx_add_device("gc", VFS_TYPE_GC);
         }
 
         vfs_save_init(save_writable);
         vfs_nx_add_device("save", VFS_TYPE_SAVE);
 #if USE_USBHSFS
-        vfs_hdd_init();
-        vfs_nx_add_device("hdd", VFS_TYPE_HDD);
+        if (R_SUCCEEDED(romfsMountFromCurrentProcess("romfs"))) {
+            vfs_nx_add_device("romfs", VFS_TYPE_STDIO);
+        }
+
+        if (R_SUCCEEDED(romfsMountDataStorageFromProgram(0x0100000000001000, "romfs_qlaunch"))) {
+            vfs_nx_add_device("romfs_qlaunch", VFS_TYPE_STDIO);
+        }
+
+        if (R_SUCCEEDED(vfs_hdd_init())) {
+            vfs_nx_add_device("hdd", VFS_TYPE_HDD);
+        }
 #endif
         vfs_root_init(g_device, &g_device_count);
 
@@ -428,11 +475,15 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
 
 void vfs_nx_exit(void) {
     if (g_enabled_devices) {
+        vfs_gc_exit();
+        vfs_storage_exit();
         vfs_save_exit();
+        vfs_root_exit();
 #if USE_USBHSFS
+        romfsUnmount("romfs_qlaunch");
+        romfsUnmount("romfs");
         vfs_hdd_exit();
 #endif
-        vfs_root_exit();
 
         for (int i = 0; i < NCM_SIZE; i++) {
             ncmContentStorageClose(&g_cs[i]);
@@ -444,7 +495,7 @@ void vfs_nx_exit(void) {
 }
 
 void vfs_nx_add_device(const char* name, enum VFS_TYPE type) {
-    if (g_device_count >= 32) {
+    if (g_device_count >= DEVICE_NUM) {
         return;
     }
 

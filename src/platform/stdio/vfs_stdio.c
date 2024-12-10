@@ -44,12 +44,8 @@ int ftp_vfs_write(struct FtpVfsFile* f, const void* buf, size_t size) {
     return fwrite(buf, 1, size, f->fd);
 }
 
-int ftp_vfs_seek(struct FtpVfsFile* f, size_t off) {
+int ftp_vfs_seek(struct FtpVfsFile* f, const void* buf, size_t size, size_t off) {
     return fseek(f->fd, off, SEEK_SET);
-}
-
-int ftp_vfs_fstat(struct FtpVfsFile* f, const char* path, struct stat* st) {
-    return fstat(fileno(f->fd), st);
 }
 
 int ftp_vfs_close(struct FtpVfsFile* f) {
@@ -79,10 +75,6 @@ const char* ftp_vfs_readdir(struct FtpVfsDir* f, struct FtpVfsDirEntry* entry) {
         return NULL;
     }
     return entry->buf->d_name;
-}
-
-int ftp_vfs_dirstat(struct FtpVfsDir* f, const struct FtpVfsDirEntry* entry, const char* path, struct stat* st) {
-    return stat(path, st);
 }
 
 int ftp_vfs_dirlstat(struct FtpVfsDir* f, const struct FtpVfsDirEntry* entry, const char* path, struct stat* st) {
