@@ -23,11 +23,7 @@ static int vfs_root_write(void* user, const void* buf, size_t size) {
     return -1;
 }
 
-static int vfs_root_seek(void* user, size_t off) {
-    return -1;
-}
-
-static int vfs_root_fstat(void* user, const char* path, struct stat* st) {
+static int vfs_root_seek(void* user, const void* buf, size_t size, size_t off) {
     return -1;
 }
 
@@ -55,7 +51,7 @@ static const char* vfs_root_readdir(void* user, void* user_entry) {
     }
 }
 
-static int vfs_root_dirstat(void* user, const void* user_entry, const char* path, struct stat* st) {
+static int vfs_root_dirlstat(void* user, const void* user_entry, const char* path, struct stat* st) {
     memset(st, 0, sizeof(*st));
     st->st_nlink = 1;
     st->st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
@@ -113,13 +109,11 @@ const FtpVfs g_vfs_root = {
     .read = vfs_root_read,
     .write = vfs_root_write,
     .seek = vfs_root_seek,
-    .fstat = vfs_root_fstat,
     .close = vfs_root_close,
     .isfile_open = vfs_root_isfile_open,
     .opendir = vfs_root_opendir,
     .readdir = vfs_root_readdir,
-    .dirstat = vfs_root_dirstat,
-    .dirlstat = vfs_root_dirstat,
+    .dirlstat = vfs_root_dirlstat,
     .closedir = vfs_root_closedir,
     .isdir_open = vfs_root_isdir_open,
     .stat = vfs_root_stat,

@@ -605,29 +605,27 @@ static enum FTP_FILE_TRANSFER_STATE ftp_file_data_transfer_progress(struct FtpSe
         } else {
             n = socket_send(session->data_sock, g_ftp.data_buf, n, 0);
             if (n < 0) {
-                if (errno != EWOULDBLOCK && errno != EAGAIN) {
-                    return FTP_FILE_TRANSFER_STATE_ERROR;
-                } else {
-                    ftp_vfs_seek(&transfer->file_vfs, transfer->offset);
+                if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                    ftp_vfs_seek(&transfer->file_vfs, g_ftp.data_buf, 0, transfer->offset);
                     return FTP_FILE_TRANSFER_STATE_BLOCKING;
+                } else {
+                    return FTP_FILE_TRANSFER_STATE_ERROR;
                 }
             } else {
                 transfer->offset += (size_t)n;
                 if (n != read) {
-                    ftp_vfs_seek(&transfer->file_vfs, transfer->offset);
+                    ftp_vfs_seek(&transfer->file_vfs, g_ftp.data_buf, n, transfer->offset);
                     return FTP_FILE_TRANSFER_STATE_BLOCKING;
-                } else if (read < sizeof(g_ftp.data_buf)) {
-                    return FTP_FILE_TRANSFER_STATE_FINISHED;
                 }
             }
         }
     } else {
         n = socket_recv(session->data_sock, g_ftp.data_buf, sizeof(g_ftp.data_buf), 0);
         if (n < 0) {
-            if (errno != EWOULDBLOCK && errno != EAGAIN) {
-                return FTP_FILE_TRANSFER_STATE_ERROR;
-            } else {
+            if (errno == EWOULDBLOCK || errno == EAGAIN) {
                 return FTP_FILE_TRANSFER_STATE_BLOCKING;
+            } else {
+                return FTP_FILE_TRANSFER_STATE_ERROR;
             }
         } else if (n == 0) {
             return FTP_FILE_TRANSFER_STATE_FINISHED;
@@ -912,8 +910,13 @@ static void ftp_cmd_MODE(struct FtpSession* session, const char* data) {
     }
 }
 
-// RETR <SP> <pathname> <CRLF> | 125, 150, (110), 226, 250, 425, 426, 451, 450, 550, 500, 501, 421, 530
-static void ftp_cmd_RETR(struct FtpSession* session, const char* data) {
+static void ftp_open_file(struct FtpSession* session, const char* data, enum FtpVfsOpenMode open_mode, enum FTP_TRANSFER_MODE transfer_mode, int error_code) {
+    session->transfer.offset = 0;
+    if (session->server_marker > 0) {
+        session->transfer.offset = session->server_marker;
+        session->server_marker = 0;
+    }
+
     struct Pathname pathname = {0};
     int rc = snprintf(pathname.s, sizeof(pathname), "%s", data);
 
@@ -923,70 +926,40 @@ static void ftp_cmd_RETR(struct FtpSession* session, const char* data) {
         struct Pathname fullpath = {0};
         rc = build_fullpath(session, &fullpath, pathname);
         if (rc < 0) {
-            ftp_client_msg(session, 550, "Requested action not taken.");
+            ftp_client_msg(session, error_code, "Requested action not taken.");
         } else {
-            rc = ftp_vfs_open(&session->transfer.file_vfs, fullpath.s, FtpVfsOpenMode_READ);
+            rc = ftp_vfs_open(&session->transfer.file_vfs, fullpath.s, open_mode);
             if (rc < 0) {
-                ftp_client_msg(session, 550, "Requested action not taken, %s Failed to open path: %s.", strerror(errno), fullpath.s);
+                ftp_client_msg(session, error_code, "Requested action not taken, %s Failed to open path: %s.", strerror(errno), fullpath.s);
             } else {
-                struct stat st = {0};
-                rc = ftp_vfs_fstat(&session->transfer.file_vfs, fullpath.s, &st);
+                if (session->transfer.offset) {
+                    rc = ftp_vfs_seek(&session->transfer.file_vfs, NULL, 0, session->transfer.offset);
+                }
+
                 if (rc < 0) {
-                    ftp_client_msg(session, 550, "Requested action not taken, %s. Failed to fstat path: %s", strerror(errno), fullpath.s);
+                    ftp_vfs_close(&session->transfer.file_vfs);
+                    ftp_client_msg(session, 550, "Requested action not taken, %s. Failed to fseek path: %s", strerror(errno), fullpath.s);
                 } else {
-                    session->transfer.offset = 0;
-                    session->transfer.size = st.st_size;
-
-                    if (session->server_marker > 0) {
-                        session->transfer.offset = session->server_marker;
-                        rc = ftp_vfs_seek(&session->transfer.file_vfs, session->transfer.offset);
-                        session->server_marker = 0;
-                    }
-
-                    if (rc < 0) {
-                        ftp_client_msg(session, 550, "Requested action not taken, %s. Failed to fseek path: %s", strerror(errno), fullpath.s);
-                    } else {
-                        ftp_data_open(session, FTP_TRANSFER_MODE_RETR);
-                    }
+                    ftp_data_open(session, transfer_mode);
                 }
             }
         }
     }
 }
 
+// RETR <SP> <pathname> <CRLF> | 125, 150, (110), 226, 250, 425, 426, 451, 450, 550, 500, 501, 421, 530
+static void ftp_cmd_RETR(struct FtpSession* session, const char* data) {
+    ftp_open_file(session, data, FtpVfsOpenMode_READ, FTP_TRANSFER_MODE_RETR, 550);
+}
+
 // STOR <SP> <pathname> <CRLF> | 125, 150, (110), 226, 250, 425, 426, 451, 551, 552, 532, 450, 452, 553, 500, 501, 421, 530
 static void ftp_cmd_STOR(struct FtpSession* session, const char* data) {
-    struct Pathname pathname = {0};
-    int rc = snprintf(pathname.s, sizeof(pathname), "%s", data);
-
-    if (rc <= 0 || rc >= sizeof(pathname)) {
-        ftp_client_msg(session, 501, "Syntax error in parameters or arguments.");
-    } else {
-        enum FtpVfsOpenMode flags = FtpVfsOpenMode_WRITE;
-        if (session->server_marker == -1) {
-            flags = FtpVfsOpenMode_APPEND;
-            session->server_marker = 0;
-        }
-
-        struct Pathname fullpath = {0};
-        rc = build_fullpath(session, &fullpath, pathname);
-        if (rc < 0) {
-            ftp_client_msg(session, 551, "Requested action aborted: page type unknown, %s.", strerror(errno));
-        } else {
-            rc = ftp_vfs_open(&session->transfer.file_vfs, fullpath.s, flags);
-            if (rc < 0) {
-                ftp_client_msg(session, 551, "Requested action aborted: page type unknown, %s. Failed to open path: %s", strerror(errno), fullpath.s);
-            } else {
-                ftp_data_open(session, FTP_TRANSFER_MODE_STOR);
-            }
-        }
-    }
+    ftp_open_file(session, data, FtpVfsOpenMode_WRITE, FTP_TRANSFER_MODE_STOR, 551);
 }
 
 // APPE <SP> <pathname> <CRLF> | 125, 150, (110), 226, 250, 425, 426, 451, 551, 552, 532, 450, 550, 452, 553, 500, 501, 502, 421, 530
 static void ftp_cmd_APPE(struct FtpSession* session, const char* data) {
-    session->server_marker = -1;
-    ftp_cmd_STOR(session, data);
+    ftp_open_file(session, data, FtpVfsOpenMode_APPEND, FTP_TRANSFER_MODE_STOR, 551);
 }
 
 // ALLO <SP> <decimal-integer> <CRLF> | 200, 202, 500, 501, 504, 421, 530

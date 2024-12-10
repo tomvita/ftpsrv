@@ -13,8 +13,11 @@ extern "C" {
 enum SaveDirType {
     SaveDirType_Invalid,
     SaveDirType_Root,
-    SaveDirType_User,
-    SaveDirType_App,
+    SaveDirType_User1,
+    SaveDirType_File,
+    SaveDirType_Zip,
+    SaveDirType_FileApp,
+    SaveDirType_ZipApp,
 };
 
 struct SavePathData {
@@ -26,9 +29,52 @@ struct SavePathData {
     size_t path_off;
 };
 
+enum mmz_State {
+    mmz_State_Local,
+    mmz_State_Data,
+    mmz_State_Descriptor,
+    mmz_State_File,
+    mmz_State_End,
+};
+
+struct mmz_FileInfoMeta {
+    u32 crc32;
+    u32 size;
+    u32 string_len;
+};
+
+struct mmz_Data {
+    FsFileSystem* fs;
+    FsFile fbuf_out;
+    u32 fbuf_off;
+
+    // meta for file_hdr and end_record.
+    u32 file_count;
+    u32 local_hdr_off;
+    u32 central_directory_size;
+
+    // meta for current file.
+    // crc32 is filled out in mmz_State_Data, and then
+    // written to file when completed.
+    struct mmz_FileInfoMeta meta;
+
+    enum mmz_State state; // current transfer state.
+    FsFile fin; // file input, used in mmz_State_Data.
+    u32 new_crc32;
+    u32 index; // file index.
+    u32 off; // relative offset for transfer state.
+    u32 zip_off; // output offset.
+    bool pending; // pending write completion to change state.
+};
+
 struct VfsSaveFile {
     struct SavePathData data;
-    struct VfsFsFile fs_file;
+
+    union {
+        struct mmz_Data mz;
+        struct VfsFsFile fs_file;
+    };
+
     FsFileSystem fs;
     bool is_valid;
 };
