@@ -1,0 +1,25 @@
+ftpsrv-sysmod uses a lot more memory than the last version. if you ever want to check how much memory a system uses, you can use hactool.
+`hactool -t pfs0 exefs.nsp --outdir out` and finally `hactool -t nso out/main`.
+this will print the section sizes, text being code, bss being static memory etc.
+the last value printed in hactool is the total size used for the sysmod (code + memory).
+for example, sys-ftpd:
+NSO0:
+Build Id: 901BDB59F8548B5A3E06C31ED96610FB64298F54000000000000000000000000
+Sections:
+.text: 00000000-00033000
+.rodata: 00033000-00044000
+.rwdata: 00044000-00049000
+.bss: 00049000-000fa000
+
+and ftpsrv:
+NSO0:
+Build Id: 8A929DF7352A88C63E844544B7975A38F3AA37A1000000000000000000000000
+Sections:
+.text: 00000000-00028000
+.rodata: 00028000-00032000
+.rwdata: 00032000-00036000
+.bss: 00036000-00094000
+
+these values are in hex, so ftpsrv uses 592kib of memory. this is quite a lot more than the previous release, however it
+was needed to prevent random freezes due to the sockets running out of memory. it should be stable now. the stress test has
+been using rclone + filezilla syncing 1k large/small files.

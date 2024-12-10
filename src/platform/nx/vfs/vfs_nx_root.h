@@ -10,7 +10,7 @@ extern "C" {
 #include <stdbool.h>
 
 struct VfsDeviceEntry {
-    char name[32];
+    char name[128];
 };
 
 struct VfsRootFile {

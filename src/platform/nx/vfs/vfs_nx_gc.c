@@ -59,8 +59,8 @@ static bool gc_mount(void) {
         return false;
     }
 
-    s64 out_size;
-    if (R_FAILED(rc = fsDeviceOperatorGetGameCardDeviceCertificate(&g_dev, &g_handle, g_cert, sizeof(g_cert), &out_size, sizeof(g_cert)))) {
+    // s64 out_size; &out_size, 
+    if (R_FAILED(rc = fsDeviceOperatorGetGameCardDeviceCertificate(&g_dev, &g_handle, g_cert, sizeof(g_cert), sizeof(g_cert)))) {
         log_file_fwrite("failed fsDeviceOperatorGetGameCardDeviceCertificate(): 0x%X\n", rc);
         goto fail_close_fs;
     }

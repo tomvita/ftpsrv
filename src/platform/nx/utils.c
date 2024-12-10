@@ -101,6 +101,11 @@ FsFileSystem* fsdev_wrapGetDeviceFileSystem(const char* name) {
     return &entry->fs;
 }
 
+void commit_save(const char* path){
+    if (find_entry(path)!=NULL)
+        fsFsCommit(&(find_entry(path)->fs));
+}
+
 int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpath) {
     int rc = 0;
     char nxpath[FS_MAX_PATH];
