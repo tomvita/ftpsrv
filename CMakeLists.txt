@@ -250,6 +250,7 @@ if (NINTENDO_SWITCH)
 
     set(NX_SRC
         src/platform/nx/vfs_nx.c
+        src/platform/nx/vfs/vfs_nx_none.c
         src/platform/nx/vfs/vfs_nx_root.c
         src/platform/nx/vfs/vfs_nx_fs.c
         src/platform/nx/vfs/vfs_nx_save.c

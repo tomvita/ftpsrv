@@ -10,6 +10,8 @@ extern "C" {
 #include <sys/stat.h>
 #include <switch.h>
 
+#include "ftpsrv.h"
+#include "vfs/vfs_nx_none.h"
 #include "vfs/vfs_nx_root.h"
 #include "vfs/vfs_nx_fs.h"
 #include "vfs/vfs_nx_save.h"
