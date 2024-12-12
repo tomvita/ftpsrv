@@ -1185,31 +1185,8 @@ static void ftp_cmd_FEAT(struct FtpSession* session, const char* data) {
         "-Extensions supported:" TELNET_EOL
         " SIZE" TELNET_EOL
         " UTF8" TELNET_EOL
+        " MDTM" TELNET_EOL
         "211 END");
-}
-
-// SIZE <SP> <pathname> <CRLF> | 213, 550
-static void ftp_cmd_SIZE(struct FtpSession* session, const char* data) {
-    struct Pathname pathname = {0};
-    int rc = snprintf(pathname.s, sizeof(pathname), "%s", data);
-
-    if (rc <= 0 || rc >= sizeof(pathname)) {
-        ftp_client_msg(session, 501, "Syntax error in parameters or arguments.");
-    } else {
-        struct Pathname fullpath = {0};
-        rc = build_fullpath(session, &fullpath, pathname);
-        if (rc < 0) {
-            ftp_client_msg(session, 501, "Syntax error in parameters or arguments, %s.", strerror(errno));
-        } else {
-            struct stat st = {0};
-            rc = ftp_vfs_stat(fullpath.s, &st);
-            if (rc < 0) {
-                ftp_client_msg(session, 550, "Requested action not taken, %s. Bad path: %s.", strerror(errno), fullpath.s);
-            } else {
-                ftp_client_msg(session, 213, "%d", st.st_size);
-            }
-        }
-    }
 }
 
 // OPTS <SP> <opts> <CRLF> | 200, 501
@@ -1222,6 +1199,56 @@ static void ftp_cmd_OPTS(struct FtpSession* session, const char* data) {
         ftp_client_msg(session, 200, "Command okay.");
     } else {
         ftp_client_msg(session, 501, "Syntax error in parameters or arguments. %s", data);
+    }
+}
+
+static int ftp_get_stat(struct FtpSession* session, const char* data, struct Pathname* fullpath, struct stat* st) {
+    struct Pathname pathname = {0};
+    int rc = snprintf(pathname.s, sizeof(pathname), "%s", data);
+
+    if (rc <= 0 || rc >= sizeof(pathname)) {
+        rc = -1;
+        ftp_client_msg(session, 501, "Syntax error in parameters or arguments.");
+    } else {
+        rc = build_fullpath(session, fullpath, pathname);
+        if (rc < 0) {
+            ftp_client_msg(session, 501, "Syntax error in parameters or arguments, %s.", strerror(errno));
+        } else {
+            struct stat st = {0};
+            rc = ftp_vfs_stat(fullpath->s, &st);
+            if (rc < 0) {
+                ftp_client_msg(session, 550, "Requested action not taken, %s. Bad path: %s.", strerror(errno), fullpath->s);
+            }
+        }
+    }
+
+    return rc;
+}
+
+// SIZE <SP> <pathname> <CRLF> | 213, 501, 550
+static void ftp_cmd_SIZE(struct FtpSession* session, const char* data) {
+    struct stat st = {0};
+    struct Pathname fullpath = {0};
+    int rc = ftp_get_stat(session, data, &fullpath, &st);
+
+    if (!rc) {
+        ftp_client_msg(session, 213, "%d", st.st_size);
+    }
+}
+
+// MDTM <SP> <pathname> <CRLF> | 200, 501
+static void ftp_cmd_MDTM(struct FtpSession* session, const char* data) {
+    struct stat st = {0};
+    struct Pathname fullpath = {0};
+    int rc = ftp_get_stat(session, data, &fullpath, &st);
+
+    if (!rc) {
+        const struct tm* gtm = gmtime(&st.st_mtime);
+        if (!st.st_mtime || !gtm) {
+            ftp_client_msg(session, 550, "Syntax error in parameters or arguments, %s. Failed to get timestamp: %s", strerror(errno), fullpath.s);
+        } else {
+            ftp_client_msg(session, 213, "%04d%02d%02d%02d%02d", gtm->tm_year + 1900, gtm->tm_mon, gtm->tm_mday, gtm->tm_hour, gtm->tm_min, gtm->tm_sec);
+        }
     }
 }
 
@@ -1266,7 +1293,9 @@ static const struct FtpCommand FTP_COMMANDS[] = {
 
     // extensions
     { .name = "FEAT", .func = ftp_cmd_FEAT, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
+    // RFC 3659: https://datatracker.ietf.org/doc/html/rfc3659
     { .name = "SIZE", .func = ftp_cmd_SIZE, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "MDTM", .func = ftp_cmd_MDTM, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
     { .name = "OPTS", .func = ftp_cmd_OPTS, .auth_required = 0, .args_required = 1, .data_connection_required = 0 },
 };
 
