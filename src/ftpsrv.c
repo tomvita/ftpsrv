@@ -42,6 +42,20 @@
     #define FTP_PATHNAME_SIZE 4096
 #endif
 
+// the below shouldn't be messed with, it will *not* improve
+// performance and will greatly increase memory usage at higher values.
+#ifndef FTP_LISTBUF_SIZE
+    #define FTP_LISTBUF_SIZE 1024
+#endif
+
+#ifndef FTP_CMDBUF_SIZE
+    #define FTP_CMDBUF_SIZE 1024
+#endif
+
+#ifndef FTP_SENDBUF_SIZE
+    #define FTP_SENDBUF_SIZE 1024
+#endif
+
 #define TELNET_EOL "\r\n"
 
 enum FTP_TYPE {
@@ -112,7 +126,7 @@ struct FtpTransfer {
     struct FtpVfsFile file_vfs;
     struct FtpVfsDir dir_vfs;
 
-    char list_buf[1024];
+    char list_buf[FTP_LISTBUF_SIZE];
 };
 
 struct FtpSession {
@@ -137,10 +151,10 @@ struct FtpSession {
 
     time_t last_update_time; // time since sessions last updated
 
-    char cmd_buf[1024];
+    char cmd_buf[FTP_CMDBUF_SIZE];
     size_t cmd_buf_size;
 
-    char send_buf[1024];
+    char send_buf[FTP_SENDBUF_SIZE];
     size_t send_buf_offset;
     size_t send_buf_size;
 
@@ -149,7 +163,7 @@ struct FtpSession {
 };
 
 struct FtpCommand {
-    const char* name;
+    const char name[5];
     void (*func)(struct FtpSession* session, const char* data);
     bool auth_required;
     bool args_required;
@@ -1347,33 +1361,69 @@ static void ftp_session_progress_line(struct FtpSession* session, const char* li
     if (rc <= 0) {
         ftp_client_msg(session, 500, "Syntax error, command unrecognized.");
     } else {
+        // correctly NULL cmd at the first space / TELNET_EOL
+        for (int i = 0; cmd_name[i]; i++) {
+            if (cmd_name[i] == ' ' || !strcmp(cmd_name + i, TELNET_EOL)) {
+                cmd_name[i] = '\0';
+                break;
+            }
+        }
+
         ftp_log_callback(FTP_API_LOG_TYPE_COMMAND, cmd_name);
 
         // find command and execute
         int command_id = -1;
+        bool custom_command = false;
         for (size_t i = 0; i < FTP_ARR_SZ(FTP_COMMANDS); i++) {
-            if (!strncasecmp(cmd_name, FTP_COMMANDS[i].name, strlen(FTP_COMMANDS[i].name))) {
+            if (!strncasecmp(cmd_name, FTP_COMMANDS[i].name, sizeof(cmd_name))) {
                 command_id = i;
                 break;
+            }
+        }
+
+        if (command_id < 0 && g_ftp.cfg.custom_command && g_ftp.cfg.custom_command_count) {
+            for (size_t i = 0; i < g_ftp.cfg.custom_command_count; i++) {
+                if (!strncasecmp(cmd_name, g_ftp.cfg.custom_command[i].name, sizeof(cmd_name))) {
+                    custom_command = true;
+                    command_id = i;
+                    break;
+                }
             }
         }
 
         if (command_id < 0) {
             ftp_client_msg(session, 500, "Syntax error, command \"%s\" unrecognized.", cmd_name);
         } else {
-            const struct FtpCommand* cmd = &FTP_COMMANDS[command_id];
-            const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
+            if (custom_command) {
+                const struct FtpSrvCustomCommand* cmd = &g_ftp.cfg.custom_command[command_id];
+                const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
 
-            // validate the command
-            if (cmd->args_required && !cmd_args) {
-                ftp_client_msg(session, 501, "Syntax error in parameters or arguments, missing required args.");
-            } else if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
-                ftp_client_msg(session, 530, "Not logged in.");
-            } else if (cmd->data_connection_required && session->data_connection == FTP_DATA_CONNECTION_NONE) {
-                ftp_client_msg(session, 501, "Syntax error in parameters or arguments, no data connection.");
+                // validate the command
+                if (cmd->args_required && !cmd_args) {
+                    ftp_client_msg(session, 501, "Syntax error in parameters or arguments, missing required args.");
+                } else if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
+                    ftp_client_msg(session, 530, "Not logged in.");
+                } else {
+                    const char* args = cmd_args ? cmd_args + 1 : "\0";
+                    char msg_buf[FTP_SENDBUF_SIZE - 10] = {0};
+                    const int code = cmd->func(cmd->userdata, args, msg_buf, sizeof(msg_buf));
+                    ftp_client_msg(session, code, "%s", msg_buf);
+                }
             } else {
-                const char* args = cmd_args ? cmd_args + 1 : "\0";
-                cmd->func(session, args);
+                const struct FtpCommand* cmd = &FTP_COMMANDS[command_id];
+                const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
+
+                // validate the command
+                if (cmd->args_required && !cmd_args) {
+                    ftp_client_msg(session, 501, "Syntax error in parameters or arguments, missing required args.");
+                } else if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
+                    ftp_client_msg(session, 530, "Not logged in.");
+                } else if (cmd->data_connection_required && session->data_connection == FTP_DATA_CONNECTION_NONE) {
+                    ftp_client_msg(session, 501, "Syntax error in parameters or arguments, no data connection.");
+                } else {
+                    const char* args = cmd_args ? cmd_args + 1 : "\0";
+                    cmd->func(session, args);
+                }
             }
         }
     }
