@@ -257,6 +257,10 @@ if (NINTENDO_SWITCH)
         src/platform/nx/vfs/vfs_nx_storage.c
         src/platform/nx/vfs/vfs_nx_gc.c
         src/platform/nx/utils.c
+        src/platform/nx/reboot_to_payload/ams_bpc.c
+        src/platform/nx/reboot_to_payload/reboot_to_payload.c
+        src/platform/nx/rtc/max77620-rtc.c
+        src/platform/nx/custom_commands.c
         src/log/log.c
     )
 

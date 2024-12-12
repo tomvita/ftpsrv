@@ -6,6 +6,7 @@
 #include <ftpsrv_vfs.h>
 #include "utils.h"
 #include "log/log.h"
+#include "custom_commands.h"
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -136,6 +137,8 @@ int main(int argc, char** argv) {
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
 
+    g_ftpsrv_config.custom_command = CUSTOM_COMMANDS;
+    g_ftpsrv_config.custom_command_count = CUSTOM_COMMANDS_SIZE;
     g_ftpsrv_config.log_callback = ftp_log_callback;
     g_ftpsrv_config.progress_callback = ftp_progress_callback;
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
@@ -238,7 +241,8 @@ int main(int argc, char** argv) {
     + 0xFFF) &~ 0xFFF) \
     * SB_EFFICIENCY
 
-alignas(0x1000) static u8 SOCKET_TRANSFER_MEM[SOCKET_TMEM_SIZE];
+alignas(0x1000) u8 SOCKET_TRANSFER_MEM[SOCKET_TMEM_SIZE];
+const u32 SOCKET_TRANSFER_MEM_SIZE = sizeof(SOCKET_TRANSFER_MEM);
 
 static u32 socketSelectVersion(void) {
     if (hosversionBefore(3,0,0)) {
