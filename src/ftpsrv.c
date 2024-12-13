@@ -1228,8 +1228,7 @@ static int ftp_get_stat(struct FtpSession* session, const char* data, struct Pat
         if (rc < 0) {
             ftp_client_msg(session, 501, "Syntax error in parameters or arguments, %s.", strerror(errno));
         } else {
-            struct stat st = {0};
-            rc = ftp_vfs_stat(fullpath->s, &st);
+            rc = ftp_vfs_stat(fullpath->s, st);
             if (rc < 0) {
                 ftp_client_msg(session, 550, "Requested action not taken, %s. Bad path: %s.", strerror(errno), fullpath->s);
             }
@@ -1258,7 +1257,7 @@ static void ftp_cmd_MDTM(struct FtpSession* session, const char* data) {
 
     if (!rc) {
         const struct tm* gtm = gmtime(&st.st_mtime);
-        if (!st.st_mtime || !gtm) {
+        if (!gtm) {
             ftp_client_msg(session, 550, "Syntax error in parameters or arguments, %s. Failed to get timestamp: %s", strerror(errno), fullpath.s);
         } else {
             ftp_client_msg(session, 213, "%04d%02d%02d%02d%02d", gtm->tm_year + 1900, gtm->tm_mon, gtm->tm_mday, gtm->tm_hour, gtm->tm_min, gtm->tm_sec);
