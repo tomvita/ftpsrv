@@ -1200,6 +1200,7 @@ static void ftp_cmd_FEAT(struct FtpSession* session, const char* data) {
         " SIZE" TELNET_EOL
         " UTF8" TELNET_EOL
         " MDTM" TELNET_EOL
+        " TVFS" TELNET_EOL
         "211 END");
 }
 
