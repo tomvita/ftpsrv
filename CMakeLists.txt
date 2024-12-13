@@ -231,14 +231,14 @@ if (NINTENDO_SWITCH)
             ${libusbhsfs_SOURCE_DIR}/source/ntfs-3g/ntfs.c
         )
 
-        find_library(ntfs-3g_lib ntfs-3g REQUIRED)
-        find_path(ntfs-3g_inc ntfs-3g REQUIRED)
+        find_library(ntfs_3g_lib ntfs-3g REQUIRED)
+        find_path(ntfs_3g_inc ntfs-3g REQUIRED)
 
         find_library(lwext4_lib lwext4 REQUIRED)
-        find_path(lwext4_inc lwext4 REQUIRED)
+        find_path(lwext4_inc ext4.h REQUIRED)
 
-        target_link_libraries(libusbhsfs PRIVATE ${ntfs-3g_lib} ${lwext4_lib})
-        target_include_directories(libusbhsfs PRIVATE ${ntfs-3g_inc} ${lwext4_inc} ${lwext4_inc}/lwext4)
+        target_link_libraries(libusbhsfs PRIVATE ${ntfs_3g_lib} ${lwext4_lib})
+        target_include_directories(libusbhsfs PRIVATE ${ntfs_3g_inc} ${lwext4_inc})
         target_compile_definitions(libusbhsfs PRIVATE GPL_BUILD)
     endif()
 
