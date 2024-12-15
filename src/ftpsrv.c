@@ -424,18 +424,26 @@ static int ftp_build_list_entry(struct FtpSession* session, const struct Pathnam
     return rc;
 }
 
-static void ftp_client_msg(struct FtpSession* session, unsigned code, const char* fmt, ...) {
-    int code_len;
-    if (fmt[0] == '-') {
-        code_len = snprintf(session->send_buf, sizeof(session->send_buf), "%u", code);
-    } else {
-        code_len = snprintf(session->send_buf, sizeof(session->send_buf), "%u ", code);
-    }
+static void ftp_session_send(struct FtpSession* session);
 
+static void ftp_client_msg(struct FtpSession* session, unsigned code, const char* fmt, ...) {
+    // prepend with the code.
+    const size_t size = sizeof(session->send_buf);
+    const size_t code_len = snprintf(session->send_buf, size, "%u ", code);
+    const size_t eol_padding = code_len * 2 + 4 + 3;
+
+    // append message.
     va_list va;
     va_start(va, fmt);
-    vsnprintf(session->send_buf + code_len, sizeof(session->send_buf) - code_len - 3, fmt, va);
+    vsnprintf(session->send_buf + code_len, size - eol_padding, fmt, va);
     va_end(va);
+
+    // if multiline message, append END.
+    const size_t len = strlen(session->send_buf);
+    if (len > code_len && session->send_buf[code_len] == '-') {
+        memmove(session->send_buf + code_len - 1, session->send_buf + code_len, len - code_len);
+        snprintf(session->send_buf + len - 1, size - len - 3, "%d END", code);
+    }
 
     if (code < 400) {
         ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, session->send_buf);
@@ -443,10 +451,14 @@ static void ftp_client_msg(struct FtpSession* session, unsigned code, const char
         ftp_log_callback(FTP_API_LOG_TYPE_ERROR, session->send_buf);
     }
 
+    // finally, append EOL and send message.
     strcat(session->send_buf, TELNET_EOL);
     session->send_buf_offset = 0;
     session->send_buf_size = strlen(session->send_buf);
     session->state = FTP_SESSION_STATE_POLLOUT;
+
+    // try to send immediately.
+    ftp_session_send(session);
 }
 
 // https://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable
@@ -540,7 +552,7 @@ static void ftp_data_open(struct FtpSession* session, enum FTP_TRANSFER_MODE mod
         session->transfer.index = 0;
         session->transfer.connection_pending = true;
 
-        // try to open immediatley
+        // try to open immediately.
         ftp_data_poll(session);
     }
 }
@@ -1201,7 +1213,7 @@ static void ftp_cmd_FEAT(struct FtpSession* session, const char* data) {
         " UTF8" TELNET_EOL
         " MDTM" TELNET_EOL
         " TVFS" TELNET_EOL
-        "211 END");
+    );
 }
 
 // OPTS <SP> <opts> <CRLF> | 200, 501

@@ -4,6 +4,51 @@
 #include <switch.h>
 #include "ams_bpc.h"
 #include "reboot_to_payload.h"
+#include "../utils.h"
+
+#define IRAM_PAYLOAD_MAX_SIZE 0x24000
+
+bool validate_payload_from_file(FsFile* file, bool check_hekate) {
+    s64 size;
+    if (R_FAILED(fsFileGetSize(file, &size))) {
+        return false;
+    }
+
+    if (size > IRAM_PAYLOAD_MAX_SIZE) {
+        return false;
+    }
+
+    if (check_hekate) {
+        u32 magic;
+        u64 bytes_read;
+        if (R_FAILED(fsFileRead(file, 0x118, &magic, sizeof(magic), 0, &bytes_read))) {
+            return false;
+        }
+
+        if (bytes_read != 4 || magic != 0x43544349) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool validate_payload_from_path(const char* path, bool check_hekate) {
+    FsFileSystem* fs;
+    char nxpath[FS_MAX_PATH];
+    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
+        return false;
+    }
+
+    FsFile file;
+    if (R_FAILED(fsFsOpenFile(fs, nxpath, FsOpenMode_Read, &file))) {
+        return false;
+    }
+
+    const bool result = validate_payload_from_file(&file, check_hekate);
+    fsFileClose(&file);
+    return result;
+}
 
 bool is_r2p_supported(void) {
     Result rc;
@@ -24,7 +69,7 @@ bool is_r2p_supported(void) {
 }
 
 bool reboot_to_payload(u8* iwram_buf, u32 size) {
-    if (size < IRAM_PAYLOAD_MAX_SIZE) {
+    if (size > IRAM_PAYLOAD_MAX_SIZE) {
         return false;
     }
 

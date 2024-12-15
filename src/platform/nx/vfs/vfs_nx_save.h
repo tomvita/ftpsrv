@@ -47,6 +47,7 @@ struct mmz_Data {
     FsFileSystem* fs;
     FsFile fbuf_out;
     u32 fbuf_off;
+    time_t time;
 
     // meta for file_hdr and end_record.
     u32 file_count;

@@ -3,6 +3,7 @@
 #include "rtc/max77620-rtc.h"
 #include "utils.h"
 #include "minIni.h"
+#include "ftpsrv_vfs.h"
 
 #include <switch.h>
 #include <switch/services/bsd.h>
@@ -21,7 +22,14 @@
 // title id for qlaunch.
 #define QLAUNCH_TID 0x0100000000001000ULL
 
-struct HekateIni {
+struct HekateListIni {
+    char* msg_buf;
+    unsigned msg_buf_len;
+    unsigned off;
+    char current_section[HEKATE_SECTION_NAME_MAX];
+};
+
+struct HekateConfigIni {
     const char* wanted;
     char current_section[HEKATE_SECTION_NAME_MAX];
     int count;
@@ -47,39 +55,8 @@ static u8* close_sockets(u32* size) {
     return memset(SOCKET_TRANSFER_MEM, 0xFF, SOCKET_TRANSFER_MEM_SIZE);
 }
 
-static bool is_hekate_file(FsFile* file) {
-    u32 magic;
-    u64 bytes_read;
-    if (R_FAILED(fsFileRead(file, 0x118, &magic, sizeof(magic), 0, &bytes_read))) {
-        return false;
-    }
-
-    if (bytes_read != 4 || magic != 0x43544349) {
-        return false;
-    }
-
-    return true;
-}
-
-static bool is_hekate_path(const char* path) {
-    FsFileSystem* fs;
-    char nxpath[FS_MAX_PATH];
-    if (fsdev_wrapTranslatePath(path, &fs, nxpath)) {
-        return false;
-    }
-
-    FsFile file;
-    if (R_FAILED(fsFsOpenFile(fs, nxpath, FsOpenMode_Read, &file))) {
-        return false;
-    }
-
-    const bool result = is_hekate_file(&file);
-    fsFileClose(&file);
-    return result;
-}
-
 static int ini_browse_callback(const mTCHAR *Section, const mTCHAR *Key, const mTCHAR *Value, void *UserData) {
-    struct HekateIni* h = UserData;
+    struct HekateConfigIni* h = UserData;
 
     // may be NULL
     if (!Section || !strcmp(Section, "config")) {
@@ -104,8 +81,66 @@ static int ini_browse_callback(const mTCHAR *Section, const mTCHAR *Key, const m
 
 }
 
+static int ini_list_callback(const mTCHAR *Section, const mTCHAR *Key, const mTCHAR *Value, void *UserData) {
+    struct HekateListIni* h = UserData;
+
+    // may be NULL
+    if (!Section || !strcmp(Section, "config")) {
+        return 1;
+    }
+
+    // check if its the same as before.
+    if (!strcmp(Section, h->current_section)) {
+        return 1;
+    }
+
+    // add new entry.
+    snprintf(h->current_section, sizeof(h->current_section), "%s", Section);
+    h->off += snprintf(h->msg_buf + h->off, h->msg_buf_len - h->off, " %s\r\n", Section);
+    if (h->off >= h->msg_buf_len) {
+        return 0;
+    }
+
+    return 1;
+
+}
+
+static void hekate_list_config(char* msg_buf, unsigned msg_buf_len, unsigned off) {
+    struct HekateListIni h = {0};
+    h.msg_buf = msg_buf;
+    h.msg_buf_len = msg_buf_len;
+    h.off = off;
+
+    // list configs found in ipl.ini
+    ini_browse(ini_list_callback, &h, "/bootloader/hekate_ipl.ini");
+
+    // list configs found in the ini folder
+    FsFileSystem* fs;
+    char nxpath[FS_MAX_PATH];
+    if (!fsdev_wrapTranslatePath("/bootloader/ini", &fs, nxpath)) {
+        FsDir dir;
+        if (R_SUCCEEDED(fsFsOpenDirectory(fs, nxpath, FsDirOpenMode_ReadFiles|FsDirOpenMode_NoFileSize, &dir))) {
+            s64 total;
+            FsDirectoryEntry buf;
+            char fullpath[FS_MAX_PATH];
+            while (R_SUCCEEDED(fsDirRead(&dir, &total, 1, &buf)) && total == 1) {
+                const int len = strlen(buf.name) - 4;
+                if (len > 0 && len < HEKATE_INI_NAME_MAX && !strcasecmp(".ini", buf.name + len)) {
+                    h.current_section[0] = '\0';
+                    snprintf(fullpath, sizeof(fullpath), "%s/%s", nxpath, buf.name);
+                    ini_browse(ini_list_callback, &h, fullpath);
+                    if (h.off >= h.msg_buf_len) {
+                        break;
+                    }
+                }
+            }
+            fsDirClose(&dir);
+        }
+    }
+}
+
 static bool hekate_get_config_idx(rtc_reboot_reason_t* rr, const char* config) {
-    struct HekateIni h = {0};
+    struct HekateConfigIni h = {0};
     h.wanted = config;
 
     if (!ini_browse(ini_browse_callback, &h, "/bootloader/hekate_ipl.ini")) {
@@ -214,22 +249,26 @@ static int ftp_custom_cmd_RTOP(void* userdata, const char* data, char* msg_buf, 
             if (R_FAILED(rc = fsFsOpenFile(fs, nxpath, FsOpenMode_Read, &file))) {
                 snprintf(msg_buf, msg_buf_len, "Syntax error in parameters or arguments, Failed to open file: %s", nxpath);
             } else {
-                u32 payload_buf_size;
-                u8* paylod_buf = close_sockets(&payload_buf_size);
-
-                u64 bytes_read;
-                rc = fsFileRead(&file, 0, paylod_buf, payload_buf_size, 0, &bytes_read);
-                fsFileClose(&file);
-                if (R_FAILED(rc)) {
-                    snprintf(msg_buf, msg_buf_len, "Failed to read file: %s, please restart ftpsrv", nxpath);
+                if (!validate_payload_from_file(&file, false)) {
+                    snprintf(msg_buf, msg_buf_len, "Syntax error in parameters or arguments, Not a valid payload: %s", nxpath);
                 } else {
-                    if (!reboot_to_payload(paylod_buf, payload_buf_size)) {
-                        snprintf(msg_buf, msg_buf_len, "Failed to reboot to payload: %s, please restart ftpsrv", nxpath);
+                    u32 payload_buf_size;
+                    u8* paylod_buf = close_sockets(&payload_buf_size);
+
+                    u64 bytes_read;
+                    rc = fsFileRead(&file, 0, paylod_buf, payload_buf_size, 0, &bytes_read);
+                    if (R_FAILED(rc)) {
+                        snprintf(msg_buf, msg_buf_len, "Failed to read file: %s, please restart ftpsrv", nxpath);
                     } else {
-                        code = 200;
-                        snprintf(msg_buf, msg_buf_len, "Bye!");
+                        if (!reboot_to_payload(paylod_buf, bytes_read)) {
+                            snprintf(msg_buf, msg_buf_len, "Failed to reboot to payload: %s, please restart ftpsrv", nxpath);
+                        } else {
+                            code = 200;
+                            snprintf(msg_buf, msg_buf_len, "Bye!");
+                        }
                     }
                 }
+                fsFileClose(&file);
             }
         }
     }
@@ -239,18 +278,18 @@ static int ftp_custom_cmd_RTOP(void* userdata, const char* data, char* msg_buf, 
 static int ftp_custom_cmd_RTOH(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
     Result rc;
     int code = FTP_DEFAULT_ERROR_CODE;
+    rtc_reboot_reason_t rr = {0};
     char* end;
     const u64 opt = strtoull(data, &end, 10);
 
-    if (opt > 3 || data == end || (opt == 1 && !strlen(end))) {
+    if (opt > 3 || data == end) {
         snprintf(msg_buf, msg_buf_len, "Failed: bad args");
+    } else if (opt == 1 && (end[0] == '\0' || !hekate_get_config_idx(&rr, end + 1))) {
+        code = 200;
+        int rc = snprintf(msg_buf, msg_buf_len, "-Listing configs:\r\n");
+        hekate_list_config(msg_buf, msg_buf_len, rc);
     } else {
-        rtc_reboot_reason_t rr = {0};
         rr.dec.reason = opt;
-        if (opt == 1 && !hekate_get_config_idx(&rr, end + 1)) {
-            snprintf(msg_buf, msg_buf_len, "Failed: unable to find config: %s", end + 1);
-            goto end;
-        }
 
         if (is_r2p_supported()) {
             FsFile file;
@@ -260,7 +299,7 @@ static int ftp_custom_cmd_RTOH(void* userdata, const char* data, char* msg_buf, 
                 char nxpath[FS_MAX_PATH] = {0};
                 if (!fsdev_wrapTranslatePath(HEKATE_PATHS[i], &fs, nxpath)) {
                     if (R_SUCCEEDED(rc = fsFsOpenFile(fs, nxpath, FsOpenMode_Read, &file))) {
-                        if (is_hekate_file(&file)) {
+                        if (validate_payload_from_file(&file, true)) {
                             found_hekate = i;
                             break;
                         }
@@ -290,7 +329,7 @@ static int ftp_custom_cmd_RTOH(void* userdata, const char* data, char* msg_buf, 
                         paylod_buf[0x98] = rr.dec.ums_idx; // mount sd card
                     }
 
-                    if (!reboot_to_payload(paylod_buf, payload_buf_size)) {
+                    if (!reboot_to_payload(paylod_buf, bytes_read)) {
                         snprintf(msg_buf, msg_buf_len, "Failed to reboot to payload: %s, please restart ftpsrv", HEKATE_PATHS[found_hekate]);
                     } else {
                         code = 200;
@@ -299,7 +338,7 @@ static int ftp_custom_cmd_RTOH(void* userdata, const char* data, char* msg_buf, 
                 }
             }
         } else {
-            if (!is_hekate_path("/bootloader/update.bin")) {
+            if (!validate_payload_from_path("/bootloader/update.bin", true)) {
                 snprintf(msg_buf, msg_buf_len, "Failed: hekate not found!");
             } else {
                 if (R_FAILED(rc = spsmInitialize())) {
@@ -331,7 +370,6 @@ static int ftp_custom_cmd_RTOH(void* userdata, const char* data, char* msg_buf, 
             }
         }
     }
-end:
     return code;
 }
 
@@ -353,25 +391,7 @@ static int ftp_custom_cmd_SHUT(void* userdata, const char* data, char* msg_buf, 
     return code;
 }
 
-static int ftp_custom_cmd_APID(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
-    Result rc;
-    int code = FTP_DEFAULT_ERROR_CODE;
-
-    if (R_FAILED(rc = pmdmntInitialize())) {
-        snprintf(msg_buf, msg_buf_len, "Failed: pmdmntInitialize() 0x%08X", rc);
-    } else {
-        u64 pid;
-        if (R_FAILED(rc = pmdmntGetApplicationProcessId(&pid))) {
-            snprintf(msg_buf, msg_buf_len, "Failed: pmdmntGetApplicationProcessId() 0x%08X", rc);
-        } else {
-            code = 200;
-            snprintf(msg_buf, msg_buf_len, "%ld", pid);
-        }
-    }
-    return code;
-}
-
-static int ftp_custom_cmd_ATID(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
+static int ftp_custom_cmd_TID(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
     Result rc;
     int code = FTP_DEFAULT_ERROR_CODE;
 
@@ -396,29 +416,19 @@ static int ftp_custom_cmd_ATID(void* userdata, const char* data, char* msg_buf, 
                 snprintf(msg_buf, msg_buf_len, "Failed: pminfoInitialize() 0x%08X", rc);
             } else {
                 code = 200;
-                snprintf(msg_buf, msg_buf_len, "%016lX", tid);
+                NcmContentId id;
+                struct AppName name;
+                if (tid == QLAUNCH_TID) {
+                    snprintf(msg_buf, msg_buf_len, "%016lX %s", tid, "Qlaunch");
+                } else if (R_SUCCEEDED(get_app_name(tid, &id, &name))) {
+                    snprintf(msg_buf, msg_buf_len, "%016lX %s", tid, name.str);
+                } else {
+                    snprintf(msg_buf, msg_buf_len, "%016lX", tid);
+                }
             }
             pminfoExit();
         }
         pmdmntExit();
-    }
-    return code;
-}
-
-static int ftp_custom_cmd_PIDS(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
-    Result rc;
-    int code = FTP_DEFAULT_ERROR_CODE;
-    u64 pids[0x50];
-    s32 process_count;
-
-    if (R_FAILED(rc = svcGetProcessList(&process_count, pids, 0x50))) {
-        snprintf(msg_buf, msg_buf_len, "Failed: svcGetProcessList() 0x%08X", rc);
-    } else {
-        code = 200;
-        int off = 0;
-        for (int i = 0; i < (process_count - 1); i++) {
-            off += snprintf(msg_buf + off, msg_buf_len - off, "%ld ", pids[i]);
-        }
     }
     return code;
 }
@@ -436,38 +446,17 @@ static int ftp_custom_cmd_TIDS(void* userdata, const char* data, char* msg_buf, 
             snprintf(msg_buf, msg_buf_len, "Failed: pminfoInitialize() 0x%08X", rc);
         } else {
             code = 200;
-            int off = 0;
+            int off = snprintf(msg_buf, msg_buf_len, "-Listing TIDS\r\n");
             for (int i = 0; i < (process_count - 1); i++) {
                 u64 tid;
                 if (R_SUCCEEDED(rc = pminfoGetProgramId(&tid, pids[i]))) {
-                    off += snprintf(msg_buf + off, msg_buf_len - off, "%016lX ", tid);
+                    off += snprintf(msg_buf + off, msg_buf_len - off, " %016lX\r\n", tid);
+                    if (off >= msg_buf_len) {
+                        break;
+                    }
                 }
             }
             pminfoExit();
-        }
-    }
-    return code;
-}
-
-static int ftp_custom_cmd_TRMP(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
-    Result rc;
-    int code = FTP_DEFAULT_ERROR_CODE;
-    char* end;
-    u64 pid = strtoull(data, &end, 10);
-
-    if (!pid || data == end) {
-        snprintf(msg_buf, msg_buf_len, "Failed: bad args");
-    } else {
-        if (R_FAILED(rc = pmshellInitialize())) {
-            snprintf(msg_buf, msg_buf_len, "Failed: pmshellInitialize() 0x%08X", rc);
-        } else {
-            if (R_FAILED(rc = pmshellTerminateProcess(pid))) {
-                snprintf(msg_buf, msg_buf_len, "Failed: pmshellTerminateProcess(%ld) 0x%08X", pid, rc);
-            } else {
-                code = 200;
-                snprintf(msg_buf, msg_buf_len, "success");
-            }
-            pmshellExit();
         }
     }
     return code;
@@ -506,16 +495,10 @@ const struct FtpSrvCustomCommand CUSTOM_COMMANDS[] = {
     { "RTOH", ftp_custom_cmd_RTOH, NULL, 1, 1 },
     // shutdown console
     { "SHUT", ftp_custom_cmd_SHUT, NULL, 1, 0 },
-    // list current application pid
-    { "APID", ftp_custom_cmd_APID, NULL, 1, 0 },
     // list current application tid
-    { "ATID", ftp_custom_cmd_ATID, NULL, 1, 0 },
-    // list all pids
-    { "PIDS", ftp_custom_cmd_PIDS, NULL, 1, 0 },
+    { "TID", ftp_custom_cmd_TID, NULL, 1, 0 },
     // list all tids
     { "TIDS", ftp_custom_cmd_TIDS, NULL, 1, 0 },
-    // terminate pid
-    { "TRMP", ftp_custom_cmd_TRMP, NULL, 1, 1 },
     // terminate tid
     { "TRMT", ftp_custom_cmd_TRMT, NULL, 1, 1 },
 };
