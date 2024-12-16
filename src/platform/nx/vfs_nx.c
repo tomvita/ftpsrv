@@ -271,7 +271,7 @@ static const struct MountEntry BIS_NAMES[] = {
     { "bis_system", FsBisPartitionId_System },
 };
 
-void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
+void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool mount_misc) {
     g_enabled_devices = enable_devices;
     if (g_enabled_devices) {
 
@@ -312,45 +312,46 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
         }
 
         // bis storage
-        vfs_storage_init();
-        vfs_nx_add_device("bis", VFS_TYPE_STORAGE);
-
-        // bis fs
-        if (mount_bis) {
-            for (int i = 0; i < ARRAY_SIZE(BIS_NAMES); i++) {
-                if (!fsdev_wrapMountBis(BIS_NAMES[i].name, BIS_NAMES[i].id)) {
-                    vfs_nx_add_device(BIS_NAMES[i].name, VFS_TYPE_FS);
+        if (mount_misc) {
+            vfs_storage_init();
+            vfs_nx_add_device("bis", VFS_TYPE_STORAGE);
+            // bis fs
+            if (mount_bis) {
+                for (int i = 0; i < ARRAY_SIZE(BIS_NAMES); i++) {
+                    if (!fsdev_wrapMountBis(BIS_NAMES[i].name, BIS_NAMES[i].id)) {
+                        vfs_nx_add_device(BIS_NAMES[i].name, VFS_TYPE_FS);
+                    }
                 }
             }
-        }
 
-        // content storage
-        FsFileSystem fs;
-        if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_System))) {
-            fsdev_wrapMountDevice("content_system", NULL, fs, true);
-            vfs_nx_add_device("content_system", VFS_TYPE_FS);
-        }
-        if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_User))) {
-            fsdev_wrapMountDevice("content_user", NULL, fs, true);
-            vfs_nx_add_device("content_user", VFS_TYPE_FS);
-        }
-        if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_SdCard))) {
-            fsdev_wrapMountDevice("content_sdcard", NULL, fs, true);
-            vfs_nx_add_device("content_sdcard", VFS_TYPE_FS);
-        }
-        if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_System0))) {
-            fsdev_wrapMountDevice("content_system0", NULL, fs, true);
-            vfs_nx_add_device("content_system0", VFS_TYPE_FS);
-        }
+            // content storage
+            FsFileSystem fs;
+            if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_System))) {
+                fsdev_wrapMountDevice("content_system", NULL, fs, true);
+                vfs_nx_add_device("content_system", VFS_TYPE_FS);
+            }
+            if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_User))) {
+                fsdev_wrapMountDevice("content_user", NULL, fs, true);
+                vfs_nx_add_device("content_user", VFS_TYPE_FS);
+            }
+            if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_SdCard))) {
+                fsdev_wrapMountDevice("content_sdcard", NULL, fs, true);
+                vfs_nx_add_device("content_sdcard", VFS_TYPE_FS);
+            }
+            if (R_SUCCEEDED(fsOpenContentStorageFileSystem(&fs, FsContentStorageId_System0))) {
+                fsdev_wrapMountDevice("content_system0", NULL, fs, true);
+                vfs_nx_add_device("content_system0", VFS_TYPE_FS);
+            }
 
-        // custom storage
-        if (R_SUCCEEDED(fsOpenCustomStorageFileSystem(&fs, FsCustomStorageId_System))) {
-            fsdev_wrapMountDevice("custom_system", NULL, fs, true);
-            vfs_nx_add_device("custom_system", VFS_TYPE_FS);
-        }
-        if (R_SUCCEEDED(fsOpenCustomStorageFileSystem(&fs, FsCustomStorageId_SdCard))) {
-            fsdev_wrapMountDevice("custom_sd", NULL, fs, true);
-            vfs_nx_add_device("custom_sd", VFS_TYPE_FS);
+            // custom storage
+            if (R_SUCCEEDED(fsOpenCustomStorageFileSystem(&fs, FsCustomStorageId_System))) {
+                fsdev_wrapMountDevice("custom_system", NULL, fs, true);
+                vfs_nx_add_device("custom_system", VFS_TYPE_FS);
+            }
+            if (R_SUCCEEDED(fsOpenCustomStorageFileSystem(&fs, FsCustomStorageId_SdCard))) {
+                fsdev_wrapMountDevice("custom_sd", NULL, fs, true);
+                vfs_nx_add_device("custom_sd", VFS_TYPE_FS);
+            }
         }
 
         // add some shortcuts.
@@ -365,9 +366,9 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
             if (!fsdev_wrapMountDevice("breeze", "/switch/breeze", *sdmc, false)) {
                 vfs_nx_add_device("breeze", VFS_TYPE_FS);
             }
-            if (!fsdev_wrapMountDevice("cheats", "/switch/breeze/cheats", *sdmc, false)) {
-                vfs_nx_add_device("cheats", VFS_TYPE_FS);
-            }
+            // if (!fsdev_wrapMountDevice("cheats", "/switch/breeze/cheats", *sdmc, false)) {
+            //     vfs_nx_add_device("cheats", VFS_TYPE_FS);
+            // }
             char game_cheat_dir_str[128] = {0};
             static char game_cheat_dir_path[160] = "/switch/breeze/cheats/";
             ini_gets("Nx", "game_cheat_dir", "", game_cheat_dir_str, sizeof(game_cheat_dir_str), INI_PATH);
@@ -405,17 +406,19 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
         vfs_save_init(save_writable);
         vfs_nx_add_device("save", VFS_TYPE_SAVE);
 #if USE_USBHSFS
-        if (R_SUCCEEDED(romfsMountFromCurrentProcess("romfs"))) {
-            vfs_nx_add_device("romfs", VFS_TYPE_STDIO);
-        }
+        if (mount_misc) {
+            if (R_SUCCEEDED(romfsMountFromCurrentProcess("romfs"))) {
+                vfs_nx_add_device("romfs", VFS_TYPE_STDIO);
+            }
 
-        if (R_SUCCEEDED(romfsMountDataStorageFromProgram(0x0100000000001000, "romfs_qlaunch"))) {
-            vfs_nx_add_device("romfs_qlaunch", VFS_TYPE_STDIO);
-        }
+            if (R_SUCCEEDED(romfsMountDataStorageFromProgram(0x0100000000001000, "romfs_qlaunch"))) {
+                vfs_nx_add_device("romfs_qlaunch", VFS_TYPE_STDIO);
+            }
 
-        // if (R_SUCCEEDED(vfs_hdd_init())) {
-        //     vfs_nx_add_device("hdd", VFS_TYPE_HDD);
-        // }
+            // if (R_SUCCEEDED(vfs_hdd_init())) {
+            //     vfs_nx_add_device("hdd", VFS_TYPE_HDD);
+            // }
+        }
 #endif
         vfs_root_init(g_device, &g_device_count);
 

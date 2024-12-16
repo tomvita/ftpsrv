@@ -109,7 +109,7 @@ typedef struct FtpVfs {
     int (*rename)(const char* src, const char* dst);
 } FtpVfs;
 
-void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis);
+void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool mount_misc);
 void vfs_nx_exit(void);
 void vfs_nx_add_device(const char* name, enum VFS_TYPE type);
 

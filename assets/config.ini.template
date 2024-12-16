@@ -41,6 +41,8 @@ save_writable = 0
 # WARNING: modifying bis files can soft brick your switch!
 mount_bis = 0
 
+mount_misc = 0
+
 # uncomment to override the port for application
 # app_port = 21
 

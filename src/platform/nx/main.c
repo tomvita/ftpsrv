@@ -152,6 +152,7 @@ int main(int argc, char** argv) {
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
     const bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
     const bool mount_bis = ini_getbool("Nx", "mount_bis", 0, INI_PATH);
+    const bool mount_misc = ini_getbool("Nx", "mount_misc", 0, INI_PATH);
     const bool save_writable = ini_getbool("Nx", "save_writable", 0, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
     g_ftpsrv_config.port = ini_getl("Nx", "app_port", g_ftpsrv_config.port, INI_PATH);
@@ -173,7 +174,7 @@ int main(int argc, char** argv) {
         return error_loop("failed to get current ip address");
     }
 
-    vfs_nx_init(mount_devices, save_writable, mount_bis);
+    vfs_nx_init(mount_devices, save_writable, mount_bis, mount_misc);
 
     const struct in_addr addr = {ip};
     printf(TEXT_YELLOW "ip: %s\n", inet_ntoa(addr));
