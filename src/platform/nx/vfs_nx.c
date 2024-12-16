@@ -398,11 +398,11 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool m
                 vfs_nx_add_device("bcat", VFS_TYPE_FS);
             }
         }
-
-        // if (R_SUCCEEDED(vfs_gc_init())) {
-        //     vfs_nx_add_device("gc", VFS_TYPE_GC);
-        // }
-
+        if (mount_misc) {
+            if (R_SUCCEEDED(vfs_gc_init())) {
+                vfs_nx_add_device("gc", VFS_TYPE_GC);
+            }
+        }
         vfs_save_init(save_writable);
         vfs_nx_add_device("save", VFS_TYPE_SAVE);
 #if USE_USBHSFS
@@ -415,9 +415,9 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool m
                 vfs_nx_add_device("romfs_qlaunch", VFS_TYPE_STDIO);
             }
 
-            // if (R_SUCCEEDED(vfs_hdd_init())) {
-            //     vfs_nx_add_device("hdd", VFS_TYPE_HDD);
-            // }
+            if (R_SUCCEEDED(vfs_hdd_init())) {
+                vfs_nx_add_device("hdd", VFS_TYPE_HDD);
+            }
         }
 #endif
         vfs_root_init(g_device, &g_device_count);
