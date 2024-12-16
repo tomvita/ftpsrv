@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
 set(FTPSRV_VERSION_MAJOR 1)
-set(FTPSRV_VERSION_MINOR 0)
+set(FTPSRV_VERSION_MINOR 1)
 set(FTPSRV_VERSION_PATCH 0)
 set(FTPSRV_VERSION ${FTPSRV_VERSION_MAJOR}.${FTPSRV_VERSION_MINOR}.${FTPSRV_VERSION_PATCH})
 
@@ -231,14 +231,14 @@ if (NINTENDO_SWITCH)
             ${libusbhsfs_SOURCE_DIR}/source/ntfs-3g/ntfs.c
         )
 
-        find_library(ntfs-3g_lib ntfs-3g REQUIRED)
-        find_path(ntfs-3g_inc ntfs-3g REQUIRED)
+        find_library(ntfs_3g_lib ntfs-3g REQUIRED)
+        find_path(ntfs_3g_inc ntfs-3g REQUIRED)
 
         find_library(lwext4_lib lwext4 REQUIRED)
-        find_path(lwext4_inc lwext4 REQUIRED)
+        find_path(lwext4_inc ext4.h REQUIRED)
 
-        target_link_libraries(libusbhsfs PRIVATE ${ntfs-3g_lib} ${lwext4_lib})
-        target_include_directories(libusbhsfs PRIVATE ${ntfs-3g_inc} ${lwext4_inc} ${lwext4_inc}/lwext4)
+        target_link_libraries(libusbhsfs PRIVATE ${ntfs_3g_lib} ${lwext4_lib})
+        target_include_directories(libusbhsfs PRIVATE ${ntfs_3g_inc} ${lwext4_inc})
         target_compile_definitions(libusbhsfs PRIVATE GPL_BUILD)
     endif()
 
@@ -250,12 +250,17 @@ if (NINTENDO_SWITCH)
 
     set(NX_SRC
         src/platform/nx/vfs_nx.c
+        src/platform/nx/vfs/vfs_nx_none.c
         src/platform/nx/vfs/vfs_nx_root.c
         src/platform/nx/vfs/vfs_nx_fs.c
         src/platform/nx/vfs/vfs_nx_save.c
         src/platform/nx/vfs/vfs_nx_storage.c
         src/platform/nx/vfs/vfs_nx_gc.c
         src/platform/nx/utils.c
+        src/platform/nx/reboot_to_payload/ams_bpc.c
+        src/platform/nx/reboot_to_payload/reboot_to_payload.c
+        src/platform/nx/rtc/max77620-rtc.c
+        src/platform/nx/custom_commands.c
         src/log/log.c
     )
 

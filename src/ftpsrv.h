@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+
 enum FTP_API_LOG_TYPE {
     FTP_API_LOG_TYPE_COMMAND,
     FTP_API_LOG_TYPE_RESPONSE,
@@ -23,19 +25,30 @@ enum FTP_API_LOOP_ERROR {
 typedef void (*FtpSrvLogCallback)(enum FTP_API_LOG_TYPE, const char*);
 typedef void (*FtpSrvProgressCallback)(void);
 
+struct FtpSrvCustomCommand {
+    char name[5];
+    int (*func)(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len);
+    void* userdata;
+    bool auth_required;
+    bool args_required;
+};
+
 struct FtpSrvConfig {
     char user[128];
     char pass[128];
     unsigned port;
 
     // if set, anon access is allowed.
-    unsigned char anon;
+    bool anon;
     // if set, file uploads are not allowed.
-    unsigned char read_only;
+    bool read_only;
     // if set, an account is required for storing files.
-    unsigned char write_account_required;
+    bool write_account_required;
     // if set, sessions will be closed once this is elapsed.
     unsigned timeout;
+
+    const struct FtpSrvCustomCommand* custom_command;
+    unsigned custom_command_count;
 
     FtpSrvLogCallback log_callback;
     FtpSrvProgressCallback progress_callback;

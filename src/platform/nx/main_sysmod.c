@@ -2,6 +2,7 @@
 #include <ftpsrv_vfs.h>
 #include "utils.h"
 #include "log/log.h"
+#include "custom_commands.h"
 
 #include <string.h>
 #include <switch.h>
@@ -27,6 +28,8 @@ static void ftp_progress_callback(void) {
 }
 
 int main(void) {
+    g_ftpsrv_config.custom_command = CUSTOM_COMMANDS;
+    g_ftpsrv_config.custom_command_count = CUSTOM_COMMANDS_SIZE;
     g_ftpsrv_config.log_callback = ftp_log_callback;
     g_ftpsrv_config.progress_callback = ftp_progress_callback;
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
@@ -94,7 +97,8 @@ u32 __nx_fs_num_sessions = 1;
 
 #define NUMBER_OF_SOCKETS (2)
 
-alignas(0x1000) static u8 SOCKET_TRANSFER_MEM[SOCKET_TMEM_SIZE * NUMBER_OF_SOCKETS];
+alignas(0x1000) u8 SOCKET_TRANSFER_MEM[SOCKET_TMEM_SIZE * NUMBER_OF_SOCKETS];
+const u32 SOCKET_TRANSFER_MEM_SIZE = sizeof(SOCKET_TRANSFER_MEM);
 
 static u32 socketSelectVersion(void) {
     if (hosversionBefore(3,0,0)) {
@@ -194,7 +198,6 @@ void __appInit(void) {
 
     hidsysInitialize();
     __libnx_init_time();
-    smExit(); // Close SM as we don't need it anymore.
 }
 
 // Service deinitialization.
@@ -210,4 +213,5 @@ void __appExit(void) {
     fsdev_wrapUnmountAll();
     fsExit();
     timeExit();
+    smExit();
 }

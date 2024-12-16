@@ -42,6 +42,20 @@
     #define FTP_PATHNAME_SIZE 4096
 #endif
 
+// the below shouldn't be messed with, it will *not* improve
+// performance and will greatly increase memory usage at higher values.
+#ifndef FTP_LISTBUF_SIZE
+    #define FTP_LISTBUF_SIZE 1024
+#endif
+
+#ifndef FTP_CMDBUF_SIZE
+    #define FTP_CMDBUF_SIZE 1024
+#endif
+
+#ifndef FTP_SENDBUF_SIZE
+    #define FTP_SENDBUF_SIZE 1024
+#endif
+
 #define TELNET_EOL "\r\n"
 
 enum FTP_TYPE {
@@ -112,7 +126,7 @@ struct FtpTransfer {
     struct FtpVfsFile file_vfs;
     struct FtpVfsDir dir_vfs;
 
-    char list_buf[1024];
+    char list_buf[FTP_LISTBUF_SIZE];
 };
 
 struct FtpSession {
@@ -137,10 +151,10 @@ struct FtpSession {
 
     time_t last_update_time; // time since sessions last updated
 
-    char cmd_buf[1024];
+    char cmd_buf[FTP_CMDBUF_SIZE];
     size_t cmd_buf_size;
 
-    char send_buf[1024];
+    char send_buf[FTP_SENDBUF_SIZE];
     size_t send_buf_offset;
     size_t send_buf_size;
 
@@ -149,7 +163,7 @@ struct FtpSession {
 };
 
 struct FtpCommand {
-    const char* name;
+    const char name[5];
     void (*func)(struct FtpSession* session, const char* data);
     bool auth_required;
     bool args_required;
@@ -410,18 +424,26 @@ static int ftp_build_list_entry(struct FtpSession* session, const struct Pathnam
     return rc;
 }
 
-static void ftp_client_msg(struct FtpSession* session, unsigned code, const char* fmt, ...) {
-    int code_len;
-    if (fmt[0] == '-') {
-        code_len = snprintf(session->send_buf, sizeof(session->send_buf), "%u", code);
-    } else {
-        code_len = snprintf(session->send_buf, sizeof(session->send_buf), "%u ", code);
-    }
+static void ftp_session_send(struct FtpSession* session);
 
+static void ftp_client_msg(struct FtpSession* session, unsigned code, const char* fmt, ...) {
+    // prepend with the code.
+    const size_t size = sizeof(session->send_buf);
+    const size_t code_len = snprintf(session->send_buf, size, "%u ", code);
+    const size_t eol_padding = code_len * 2 + 4 + 3;
+
+    // append message.
     va_list va;
     va_start(va, fmt);
-    vsnprintf(session->send_buf + code_len, sizeof(session->send_buf) - code_len - 3, fmt, va);
+    vsnprintf(session->send_buf + code_len, size - eol_padding, fmt, va);
     va_end(va);
+
+    // if multiline message, append END.
+    const size_t len = strlen(session->send_buf);
+    if (len > code_len && session->send_buf[code_len] == '-') {
+        memmove(session->send_buf + code_len - 1, session->send_buf + code_len, len - code_len);
+        snprintf(session->send_buf + len - 1, size - len - 3, "%d END", code);
+    }
 
     if (code < 400) {
         ftp_log_callback(FTP_API_LOG_TYPE_RESPONSE, session->send_buf);
@@ -429,10 +451,14 @@ static void ftp_client_msg(struct FtpSession* session, unsigned code, const char
         ftp_log_callback(FTP_API_LOG_TYPE_ERROR, session->send_buf);
     }
 
+    // finally, append EOL and send message.
     strcat(session->send_buf, TELNET_EOL);
     session->send_buf_offset = 0;
     session->send_buf_size = strlen(session->send_buf);
     session->state = FTP_SESSION_STATE_POLLOUT;
+
+    // try to send immediately.
+    ftp_session_send(session);
 }
 
 // https://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable
@@ -526,7 +552,7 @@ static void ftp_data_open(struct FtpSession* session, enum FTP_TRANSFER_MODE mod
         session->transfer.index = 0;
         session->transfer.connection_pending = true;
 
-        // try to open immediatley
+        // try to open immediately.
         ftp_data_poll(session);
     }
 }
@@ -1185,31 +1211,9 @@ static void ftp_cmd_FEAT(struct FtpSession* session, const char* data) {
         "-Extensions supported:" TELNET_EOL
         " SIZE" TELNET_EOL
         " UTF8" TELNET_EOL
-        "211 END");
-}
-
-// SIZE <SP> <pathname> <CRLF> | 213, 550
-static void ftp_cmd_SIZE(struct FtpSession* session, const char* data) {
-    struct Pathname pathname = {0};
-    int rc = snprintf(pathname.s, sizeof(pathname), "%s", data);
-
-    if (rc <= 0 || rc >= sizeof(pathname)) {
-        ftp_client_msg(session, 501, "Syntax error in parameters or arguments.");
-    } else {
-        struct Pathname fullpath = {0};
-        rc = build_fullpath(session, &fullpath, pathname);
-        if (rc < 0) {
-            ftp_client_msg(session, 501, "Syntax error in parameters or arguments, %s.", strerror(errno));
-        } else {
-            struct stat st = {0};
-            rc = ftp_vfs_stat(fullpath.s, &st);
-            if (rc < 0) {
-                ftp_client_msg(session, 550, "Requested action not taken, %s. Bad path: %s.", strerror(errno), fullpath.s);
-            } else {
-                ftp_client_msg(session, 213, "%d", st.st_size);
-            }
-        }
-    }
+        " MDTM" TELNET_EOL
+        " TVFS" TELNET_EOL
+    );
 }
 
 // OPTS <SP> <opts> <CRLF> | 200, 501
@@ -1222,6 +1226,55 @@ static void ftp_cmd_OPTS(struct FtpSession* session, const char* data) {
         ftp_client_msg(session, 200, "Command okay.");
     } else {
         ftp_client_msg(session, 501, "Syntax error in parameters or arguments. %s", data);
+    }
+}
+
+static int ftp_get_stat(struct FtpSession* session, const char* data, struct Pathname* fullpath, struct stat* st) {
+    struct Pathname pathname = {0};
+    int rc = snprintf(pathname.s, sizeof(pathname), "%s", data);
+
+    if (rc <= 0 || rc >= sizeof(pathname)) {
+        rc = -1;
+        ftp_client_msg(session, 501, "Syntax error in parameters or arguments.");
+    } else {
+        rc = build_fullpath(session, fullpath, pathname);
+        if (rc < 0) {
+            ftp_client_msg(session, 501, "Syntax error in parameters or arguments, %s.", strerror(errno));
+        } else {
+            rc = ftp_vfs_stat(fullpath->s, st);
+            if (rc < 0) {
+                ftp_client_msg(session, 550, "Requested action not taken, %s. Bad path: %s.", strerror(errno), fullpath->s);
+            }
+        }
+    }
+
+    return rc;
+}
+
+// SIZE <SP> <pathname> <CRLF> | 213, 501, 550
+static void ftp_cmd_SIZE(struct FtpSession* session, const char* data) {
+    struct stat st = {0};
+    struct Pathname fullpath = {0};
+    int rc = ftp_get_stat(session, data, &fullpath, &st);
+
+    if (!rc) {
+        ftp_client_msg(session, 213, "%d", st.st_size);
+    }
+}
+
+// MDTM <SP> <pathname> <CRLF> | 200, 501
+static void ftp_cmd_MDTM(struct FtpSession* session, const char* data) {
+    struct stat st = {0};
+    struct Pathname fullpath = {0};
+    int rc = ftp_get_stat(session, data, &fullpath, &st);
+
+    if (!rc) {
+        const struct tm* gtm = gmtime(&st.st_mtime);
+        if (!gtm) {
+            ftp_client_msg(session, 550, "Syntax error in parameters or arguments, %s. Failed to get timestamp: %s", strerror(errno), fullpath.s);
+        } else {
+            ftp_client_msg(session, 213, "%04d%02d%02d%02d%02d", gtm->tm_year + 1900, gtm->tm_mon, gtm->tm_mday, gtm->tm_hour, gtm->tm_min, gtm->tm_sec);
+        }
     }
 }
 
@@ -1266,7 +1319,9 @@ static const struct FtpCommand FTP_COMMANDS[] = {
 
     // extensions
     { .name = "FEAT", .func = ftp_cmd_FEAT, .auth_required = 0, .args_required = 0, .data_connection_required = 0 },
+    // RFC 3659: https://datatracker.ietf.org/doc/html/rfc3659
     { .name = "SIZE", .func = ftp_cmd_SIZE, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
+    { .name = "MDTM", .func = ftp_cmd_MDTM, .auth_required = 1, .args_required = 1, .data_connection_required = 0 },
     { .name = "OPTS", .func = ftp_cmd_OPTS, .auth_required = 0, .args_required = 1, .data_connection_required = 0 },
 };
 
@@ -1318,33 +1373,69 @@ static void ftp_session_progress_line(struct FtpSession* session, const char* li
     if (rc <= 0) {
         ftp_client_msg(session, 500, "Syntax error, command unrecognized.");
     } else {
+        // correctly NULL cmd at the first space / TELNET_EOL
+        for (int i = 0; cmd_name[i]; i++) {
+            if (cmd_name[i] == ' ' || !strcmp(cmd_name + i, TELNET_EOL)) {
+                cmd_name[i] = '\0';
+                break;
+            }
+        }
+
         ftp_log_callback(FTP_API_LOG_TYPE_COMMAND, cmd_name);
 
         // find command and execute
         int command_id = -1;
+        bool custom_command = false;
         for (size_t i = 0; i < FTP_ARR_SZ(FTP_COMMANDS); i++) {
-            if (!strncasecmp(cmd_name, FTP_COMMANDS[i].name, strlen(FTP_COMMANDS[i].name))) {
+            if (!strncasecmp(cmd_name, FTP_COMMANDS[i].name, sizeof(cmd_name))) {
                 command_id = i;
                 break;
+            }
+        }
+
+        if (command_id < 0 && g_ftp.cfg.custom_command && g_ftp.cfg.custom_command_count) {
+            for (size_t i = 0; i < g_ftp.cfg.custom_command_count; i++) {
+                if (!strncasecmp(cmd_name, g_ftp.cfg.custom_command[i].name, sizeof(cmd_name))) {
+                    custom_command = true;
+                    command_id = i;
+                    break;
+                }
             }
         }
 
         if (command_id < 0) {
             ftp_client_msg(session, 500, "Syntax error, command \"%s\" unrecognized.", cmd_name);
         } else {
-            const struct FtpCommand* cmd = &FTP_COMMANDS[command_id];
-            const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
+            if (custom_command) {
+                const struct FtpSrvCustomCommand* cmd = &g_ftp.cfg.custom_command[command_id];
+                const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
 
-            // validate the command
-            if (cmd->args_required && !cmd_args) {
-                ftp_client_msg(session, 501, "Syntax error in parameters or arguments, missing required args.");
-            } else if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
-                ftp_client_msg(session, 530, "Not logged in.");
-            } else if (cmd->data_connection_required && session->data_connection == FTP_DATA_CONNECTION_NONE) {
-                ftp_client_msg(session, 501, "Syntax error in parameters or arguments, no data connection.");
+                // validate the command
+                if (cmd->args_required && !cmd_args) {
+                    ftp_client_msg(session, 501, "Syntax error in parameters or arguments, missing required args.");
+                } else if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
+                    ftp_client_msg(session, 530, "Not logged in.");
+                } else {
+                    const char* args = cmd_args ? cmd_args + 1 : "\0";
+                    char msg_buf[FTP_SENDBUF_SIZE - 10] = {0};
+                    const int code = cmd->func(cmd->userdata, args, msg_buf, sizeof(msg_buf));
+                    ftp_client_msg(session, code, "%s", msg_buf);
+                }
             } else {
-                const char* args = cmd_args ? cmd_args + 1 : "\0";
-                cmd->func(session, args);
+                const struct FtpCommand* cmd = &FTP_COMMANDS[command_id];
+                const char* cmd_args = memchr(line + strlen(cmd->name), ' ', line_len - strlen(cmd->name));
+
+                // validate the command
+                if (cmd->args_required && !cmd_args) {
+                    ftp_client_msg(session, 501, "Syntax error in parameters or arguments, missing required args.");
+                } else if (cmd->auth_required && session->auth_mode != FTP_AUTH_MODE_VALID) {
+                    ftp_client_msg(session, 530, "Not logged in.");
+                } else if (cmd->data_connection_required && session->data_connection == FTP_DATA_CONNECTION_NONE) {
+                    ftp_client_msg(session, 501, "Syntax error in parameters or arguments, no data connection.");
+                } else {
+                    const char* args = cmd_args ? cmd_args + 1 : "\0";
+                    cmd->func(session, args);
+                }
             }
         }
     }

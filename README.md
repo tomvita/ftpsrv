@@ -4,8 +4,6 @@ small, fast, single threaded ftp implementation in C.
 
 it uses no dynamic memory allocation, has very low memory footprint (the size of everything can be configured at build time) and uses poll() (or select() if poll isn't available) to allow for a responsive single threaded server with very low overhead.
 
-i created ftpsrv so learn about the ftp protocal.
-
 ## platforms
 
 i have ported ftpsrv to a few platforms that i regularly use, such as:
@@ -15,9 +13,9 @@ i have ported ftpsrv to a few platforms that i regularly use, such as:
 - nintendo 3ds.
 - nintendo ds.
 
-i do plan to port it to the ps4 at some point, just haven't had the time to learn how to make a dameon (background service), if anyone has any guides / examples, please open an issue!
+## Nx custom commands
 
-The 3ds port needs some further work on the filesystem front. Currently it used posix io which works fine, but there is overhead in doing so. Using the fs service directly is more performent.
+a few useful custom commands was added to the switch port, to see a full list, check the wiki at https://github.com/ITotalJustice/ftpsrv/wiki/Nx-%E2%80%90-Custom-Commands.
 
 ## config
 
@@ -69,39 +67,7 @@ This bug can be observed when viewing a dir with .jpg/.png inside. It will issue
 
 If you dont return the filename, or, return an error code with LIST then kde will send a SIZE and RETR and function normally.
 
-## Ffmpeg ABOR workaround
+## credit
 
-due to the streaming nature, multiple send() can be recived by a single recv().
-Normally, a client would not issue multiple commands, the exception being ABOR, which can be sent whenever it wants, even during the middle of a transfer.
-
-Due to this, i split the commands and it's arguments by the ending "\r\n" which should work across clients, and it satisfies ffmpeg/mpv which seems to use ABOR during every transfer, causing a hang on ffmpeg's side due to it waiting for the response from ESPV.
-
-## list of allowed un-authenticated commands
-
-- USER
-- PASS
-- ACCT
-- REIN
-- QUIT
-- ABOR
-- SYST
-- HELP
-- NOOP
-- FEAT
-
-## notes
-
-- in RFC959, PWD is shown to not return 530, meaning that it should be allowed for un-authenticated access. In my implementation however, i require it to be be authentiacted and will return 530.
-
-## todo
-
-- validate commands in order (RNTO happens after RNFR)
-- add tls support
-- add ACCT
-- add SMNT
-- add REIN
-- add STOU
-- add ALLO
-- add SITE
-- add STAT
-- add HELP
+- https://users.cs.jmu.edu/buchhofp/forensics/formats/pkzip.html
+- everyone that helped test, bug report, suggest features ect.
