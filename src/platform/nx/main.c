@@ -132,7 +132,7 @@ static int error_loop(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    consolePrint("\n[ftpsrv " FTPSRV_VERSION_STR " By TotalJustice]\n\n");
+    consolePrint("\n[ftpsrv " FTPSRV_VERSION_STR " By TotalJustice, customized for Breeze by tomvita]\n\nChanges to game save0: save1: are applied when you press '+' to exit.\n\n");
 
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
@@ -142,8 +142,11 @@ int main(int argc, char** argv) {
     g_ftpsrv_config.log_callback = ftp_log_callback;
     g_ftpsrv_config.progress_callback = ftp_progress_callback;
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
+    if (g_ftpsrv_config.anon==0) ini_puts("Login", "anon", "0", INI_PATH);
     const int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
+    if ((user_len)==0) ini_puts("Login", "user", "", INI_PATH);
     const int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
+    if ((pass_len)==0) ini_puts("Login", "pass", "", INI_PATH);
     g_ftpsrv_config.port = ini_getl("Network", "port", 21, INI_PATH);
     g_ftpsrv_config.timeout = ini_getl("Network", "timeout", 0, INI_PATH);
     const bool log_enabled = ini_getbool("Log", "log", 0, INI_PATH);
@@ -185,6 +188,7 @@ int main(int argc, char** argv) {
     printf(TEXT_YELLOW "timeout: %us" TEXT_NORMAL "\n", g_ftpsrv_config.timeout);
     printf(TEXT_YELLOW "log: %d" TEXT_NORMAL "\n", log_enabled);
     printf(TEXT_YELLOW "mount_devices: %d" TEXT_NORMAL "\n", mount_devices);
+    printf(TEXT_YELLOW "mount_misc: %d" TEXT_NORMAL "\n", ini_getbool("Nx", "mount_misc", 0, INI_PATH));
     printf(TEXT_YELLOW "save_writable: %d" TEXT_NORMAL "\n", save_writable);
     printf(TEXT_YELLOW "\nconfig: %s" TEXT_NORMAL "\n", INI_PATH);
     if (appletGetAppletType() == AppletType_LibraryApplet || appletGetAppletType() == AppletType_SystemApplet) {
@@ -205,6 +209,12 @@ int main(int argc, char** argv) {
                 padUpdate(&g_pad);
                 const u64 kDown = padGetButtonsDown(&g_pad);
                 if (kDown & HidNpadButton_Plus) {
+                    commit_save("save0");
+                    commit_save("save1");
+                    commit_save("bcat");
+                    break;
+                }
+                if (kDown & HidNpadButton_B) {
                     break;
                 }
 
@@ -324,6 +334,8 @@ void userAppInit(void) {
 }
 
 void userAppExit(void) {
+ #define BREEZE_NRO "/switch/Breeze/Breeze.nro"
+    envSetNextLoad(BREEZE_NRO, BREEZE_NRO);   
     log_file_exit();
     vfs_nx_exit();
     consoleExit(NULL);
