@@ -271,7 +271,7 @@ static const struct MountEntry BIS_NAMES[] = {
     { "bis_system", FsBisPartitionId_System },
 };
 
-void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
+void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool mount_save) {
     g_enabled_devices = enable_devices;
     if (g_enabled_devices) {
 
@@ -390,16 +390,18 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis) {
             const u64 bcat_id = strtoull(bcat_id_str, NULL, 16);
             AccountUid uid[2];
             s32 actual_total;
-            if (R_SUCCEEDED(accountListAllUsers(uid, 2, &actual_total))) {
-                if (R_SUCCEEDED(fsdev_wrapMountSave("save0", save_id, uid[0]))) {
-                    vfs_nx_add_device("save0", VFS_TYPE_FS);
+            if (mount_save) {
+                if (R_SUCCEEDED(accountListAllUsers(uid, 2, &actual_total))) {
+                    if (R_SUCCEEDED(fsdev_wrapMountSave("save0", save_id, uid[0]))) {
+                        vfs_nx_add_device("save0", VFS_TYPE_FS);
+                    };
+                    if (R_SUCCEEDED(fsdev_wrapMountSave("save1", save_id, uid[1]))) {
+                        vfs_nx_add_device("save1", VFS_TYPE_FS);
+                    };
                 };
-                if (R_SUCCEEDED(fsdev_wrapMountSave("save1", save_id, uid[1]))) {
-                    vfs_nx_add_device("save1", VFS_TYPE_FS);
-                };
-            };
-            if (R_SUCCEEDED(fsdev_wrapMountSaveBcat("bcat", bcat_id))) {
-                vfs_nx_add_device("bcat", VFS_TYPE_FS);
+                if (R_SUCCEEDED(fsdev_wrapMountSaveBcat("bcat", bcat_id))) {
+                    vfs_nx_add_device("bcat", VFS_TYPE_FS);
+                }
             }
             static char atm_game_dir_path[160];
             sprintf(atm_game_dir_path, "/atmosphere/contents/%016lx",save_id);

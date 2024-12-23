@@ -54,7 +54,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
-    vfs_nx_init(mount_devices, save_writable, mount_bis);
+    vfs_nx_init(mount_devices, save_writable, mount_bis, false);
 
     int timeout = -1;
     if (g_ftpsrv_config.timeout) {
