@@ -9,7 +9,7 @@
 #include <switch/services/bsd.h>
 #include <minIni.h>
 
-static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* INI_PATH = "/switch/breeze/config.ini";
 static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 static bool g_led_enabled = false;

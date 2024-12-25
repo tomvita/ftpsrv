@@ -1,5 +1,5 @@
 {
-    "name"  : "sys-ftp",
-    "tid"   : "420000000000011B",
+    "name"  : "sys-ftp-breeze",
+    "tid"   : "420000000000012B",
     "requires_reboot": false
 }

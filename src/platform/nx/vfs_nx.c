@@ -16,7 +16,7 @@
 #define NCM_SIZE 2
 #define DEVICE_NUM 32
 
-static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* INI_PATH = "/switch/breeze/config.ini";
 static bool g_enabled_devices = false;
 static NcmContentStorage g_cs[NCM_SIZE];
 static NcmContentMetaDatabase g_db[NCM_SIZE];
