@@ -9,7 +9,7 @@
 #include <switch/services/bsd.h>
 #include <minIni.h>
 
-static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* INI_PATH = "/switch/breeze/config.ini";
 static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 static bool g_led_enabled = false;
@@ -70,7 +70,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
-    vfs_nx_init(mount_devices, save_writable, mount_bis);
+    vfs_nx_init(mount_devices, save_writable, mount_bis, false);
 
     int timeout = -1;
     if (g_ftpsrv_config.timeout) {
