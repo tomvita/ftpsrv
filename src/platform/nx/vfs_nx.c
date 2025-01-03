@@ -321,12 +321,12 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool m
         }
         // bis storage
         if (mount_misc) {
+        if (mount_bis) {
 #if USE_VFS_STORAGE
         vfs_storage_init();
         vfs_nx_add_device("bis", VFS_TYPE_STORAGE);
 #endif
         // bis fs
-        if (mount_bis) {
             for (int i = 0; i < ARRAY_SIZE(BIS_NAMES); i++) {
                 if (!fsdev_wrapMountBis(BIS_NAMES[i].name, BIS_NAMES[i].id)) {
                     vfs_nx_add_device(BIS_NAMES[i].name, VFS_TYPE_FS);
