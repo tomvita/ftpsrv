@@ -14,11 +14,9 @@ struct VfsFsFile {
     FsFile fd;
     s64 off;
     s64 chunk_size;
-    bool is_write;
     bool is_valid;
-#if VFS_NX_BUFFER_IO
+#if VFS_NX_BUFFER_WRITES
     s64 buf_off;
-    s64 buf_size;
     u8 buf[1024*1024*1];
 #endif
 };
