@@ -3,8 +3,10 @@
 #include "utils.h"
 #include "log/log.h"
 #include "custom_commands.h"
+#include "vfs_nx.h"
 
 #include <string.h>
+#include <time.h>
 #include <switch.h>
 #include <switch/services/bsd.h>
 #include <minIni.h>
@@ -72,14 +74,15 @@ int main(void) {
 
     vfs_nx_init(mount_devices, save_writable, mount_bis, false);
 
-    int timeout = -1;
-    if (g_ftpsrv_config.timeout) {
+    int timeout = 5000; // 5s
+    if (g_ftpsrv_config.timeout > 0) {
         timeout = 1000 * g_ftpsrv_config.timeout;
     }
 
     while (1) {
         ftpsrv_init(&g_ftpsrv_config);
         while (1) {
+            vfs_nx_update_mounts();
             if (ftpsrv_loop(timeout) != FTP_API_LOOP_ERROR_OK) {
                 svcSleepThread(1000000000);
                 break;

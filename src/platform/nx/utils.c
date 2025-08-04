@@ -185,6 +185,15 @@ int fsdev_wrapMountDevice(const char *name, const char* shortcut, FsFileSystem f
 
     return -1;
 }
+void fsdev_wrapUnmountDevice(const char* name) {
+    struct FsDevWrapEntry* entry = find_entry(name);
+    if (entry) {
+        entry->active = false;
+        if (entry->own) {
+            fsFsClose(&entry->fs);
+        }
+    }
+}
 
 void fsdev_wrapUnmountAll(void) {
     for (int i = 0; i < FsDevWrap_DEVICES_MAX; i++) {

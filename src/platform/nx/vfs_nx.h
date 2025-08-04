@@ -142,6 +142,7 @@ typedef struct FtpVfs {
 
 void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool mount_save);
 void vfs_nx_exit(void);
+void vfs_nx_update_mounts(void);
 void vfs_nx_add_device(const char* name, enum VFS_TYPE type);
 
 Result get_app_name(u64 app_id, NcmContentId* id, struct AppName* name);

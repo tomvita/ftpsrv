@@ -23,6 +23,7 @@ static NcmContentMetaDatabase g_db[NCM_SIZE];
 static struct VfsDeviceEntry g_device[DEVICE_NUM];
 static enum VFS_TYPE g_device_type[DEVICE_NUM];
 static u32 g_device_count;
+static char g_today_path[16];
 
 static const FtpVfs* g_vfs[] = {
     [VFS_TYPE_NONE] = &g_vfs_none,
@@ -276,7 +277,27 @@ static const struct MountEntry BIS_NAMES[] = {
     { "bis_user", FsBisPartitionId_User },
     { "bis_system", FsBisPartitionId_System },
 };
+void vfs_nx_update_mounts(void) {
+    if (!g_enabled_devices) {
+        return;
+    }
 
+    time_t now = time(NULL);
+    struct tm* local_time = localtime(&now);
+    static char current_day_path[16];
+    sprintf(current_day_path, "/%04d/%02d/%02d", local_time->tm_year + 1900, local_time->tm_mon + 1, local_time->tm_mday);
+
+    if (strcmp(g_today_path, current_day_path) != 0) {
+        // Day has changed, remount the directory
+        fsdev_wrapUnmountDevice("album_sd_today");
+
+        FsFileSystem* album_sd = fsdev_wrapGetDeviceFileSystem("album_sd");
+        if (album_sd) {
+            strcpy(g_today_path, current_day_path);
+            fsdev_wrapMountDevice("album_sd_today", g_today_path, *album_sd, false);
+        }
+    }
+}
 void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool mount_save) {
     g_enabled_devices = enable_devices;
     if (g_enabled_devices) {
@@ -314,8 +335,8 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool m
             time_t now = time(NULL);
             struct tm *local_time = localtime(&now);
             static char today[16];
-            sprintf(today,"/%04d/%02d/%02d", local_time->tm_year + 1900, local_time->tm_mon + 1, local_time->tm_mday);
-            if (!fsdev_wrapMountDevice("album_sd_today", today, *album_sd, false)) {
+            sprintf(g_today_path,"/%04d/%02d/%02d", local_time->tm_year + 1900, local_time->tm_mon + 1, local_time->tm_mday);
+            if (!fsdev_wrapMountDevice("album_sd_today", g_today_path, *album_sd, false)) {
                 vfs_nx_add_device("album_sd_today", VFS_TYPE_FS);
             }
         }
