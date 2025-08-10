@@ -96,6 +96,7 @@ static void ftp_thread(void* arg) {
     while (!g_should_exit) {
         ftpsrv_init(&g_ftpsrv_config);
         while (!g_should_exit) {
+            vfs_nx_update_mounts();
             if (ftpsrv_loop(500) != FTP_API_LOOP_ERROR_OK) {
                 svcSleepThread(1000000000);
                 break;
@@ -141,6 +142,7 @@ int main(int argc, char** argv) {
     g_ftpsrv_config.custom_command_count = CUSTOM_COMMANDS_SIZE;
     g_ftpsrv_config.log_callback = ftp_log_callback;
     g_ftpsrv_config.progress_callback = ftp_progress_callback;
+    g_ftpsrv_config.login_callback = vfs_nx_update_config_mounts;
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     if (g_ftpsrv_config.anon==0) ini_puts("Login", "anon", "0", INI_PATH);
     int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
@@ -190,6 +192,8 @@ int main(int argc, char** argv) {
     }
 
     vfs_nx_init(mount_devices, save_writable, mount_bis, true);
+// Ensure config-driven mounts (e.g., game cheat dir) are available on first launch
+    vfs_nx_update_config_mounts();
 
     const struct in_addr addr = {ip};
     printf(TEXT_YELLOW "ip: %s\n", inet_ntoa(addr));

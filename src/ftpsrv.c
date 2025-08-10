@@ -734,6 +734,9 @@ static void ftp_cmd_USER(struct FtpSession* session, const char* data) {
             ftp_client_msg(session, 530, "Not logged in.");
         } else {
             session->auth_mode = FTP_AUTH_MODE_VALID;
+            if (g_ftp.cfg.login_callback) {
+                g_ftp.cfg.login_callback();
+            }
             ftp_client_msg(session, 230, "User logged in, proceed.");
         }
     } else if (strcmp(username, g_ftp.cfg.user)) {
@@ -757,6 +760,9 @@ static void ftp_cmd_PASS(struct FtpSession* session, const char* data) {
         ftp_client_msg(session, 530, "Not logged in.");
     } else {
         session->auth_mode = FTP_AUTH_MODE_VALID;
+        if (g_ftp.cfg.login_callback) {
+            g_ftp.cfg.login_callback();
+        }
         ftp_client_msg(session, 230, "User logged in, proceed.");
     }
 }

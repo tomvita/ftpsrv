@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <minIni.h>
+#include <ctype.h>
 
 #define NCM_SIZE 2
 #define DEVICE_NUM 32
@@ -298,6 +299,66 @@ void vfs_nx_update_mounts(void) {
         }
     }
 }
+
+void vfs_nx_update_config_mounts(void) {
+
+    static char game_cheat_dir_str[128] = {0};
+    char new_game_cheat_dir_str[128] = {0};
+    char new_game_cheat_dir_str_tmp[128] = {0};
+
+    ini_gets("Nx", "game_cheat_dir", "", new_game_cheat_dir_str_tmp, sizeof(new_game_cheat_dir_str_tmp), INI_PATH);
+
+    snprintf(new_game_cheat_dir_str, sizeof(new_game_cheat_dir_str), "/switch/breeze/cheats/%s", new_game_cheat_dir_str_tmp);
+
+    log_file_fwrite("nx: game_cheat_dir=%s", new_game_cheat_dir_str);
+
+    if (strcmp(game_cheat_dir_str, new_game_cheat_dir_str) != 0) {
+        log_file_write("nx: game_cheat_dir changed; updating mount");
+        if (game_cheat_dir_str[0] != '\0') {
+            fsdev_wrapUnmountDevice("breeze_cheat_dir");
+            vfs_nx_remove_device("breeze_cheat_dir");
+        }
+        strcpy(game_cheat_dir_str, new_game_cheat_dir_str);
+        if (game_cheat_dir_str[0] != '\0') {    
+            FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
+            if (sdmc) {
+                if (!fsdev_wrapMountDevice("breeze_cheat_dir", game_cheat_dir_str, *sdmc, false)) {
+                    vfs_nx_add_device("breeze_cheat_dir", VFS_TYPE_FS);
+                }
+            }
+        }
+    }
+
+    static char atm_game_dir_path[160] = {0};
+    char new_atm_game_dir_path[160] = {0};
+    char save_id_str[21] = {0};
+    ini_gets("Nx", "save_application_id", "0", save_id_str, sizeof(save_id_str), INI_PATH);
+    u64 save_id = strtoull(save_id_str, NULL, 16);
+
+    if (save_id != 0) {
+        sprintf(new_atm_game_dir_path, "/atmosphere/contents/%016lx/cheats", (unsigned long)save_id);
+    }
+    log_file_fwrite("nx: atmosphere_cheat_dir=%s", new_atm_game_dir_path);
+
+    if (strcmp(atm_game_dir_path, new_atm_game_dir_path) != 0) {
+        log_file_write("nx: atmosphere_cheat_dir changed; updating mount");
+        if (atm_game_dir_path[0] != '\0') {
+            fsdev_wrapUnmountDevice("atmosphere_cheat_dir");
+            vfs_nx_remove_device("atmosphere_cheat_dir");
+        }
+        strcpy(atm_game_dir_path, new_atm_game_dir_path);
+        if (atm_game_dir_path[0] != '\0') {
+            FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
+            if (sdmc) {
+                if (!fsdev_wrapMountDevice("atmosphere_cheat_dir", atm_game_dir_path, *sdmc, false)) {
+                    vfs_nx_add_device("atmosphere_cheat_dir", VFS_TYPE_FS);
+                }
+            }
+        }
+    }
+}
+
+
 void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool mount_save) {
     g_enabled_devices = enable_devices;
     if (g_enabled_devices) {
@@ -392,23 +453,14 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool m
                 if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
                     vfs_nx_add_device("switch", VFS_TYPE_FS);
                 }
-                if (!fsdev_wrapMountDevice("atmosphere_contents", "/atmosphere/contents", *sdmc, false)) {
-                    vfs_nx_add_device("atmosphere_contents", VFS_TYPE_FS);
+                if (!fsdev_wrapMountDevice("switch", "/switch", *sdmc, false)) {
+                    vfs_nx_add_device("switch", VFS_TYPE_FS);
                 }
             }
             if (!fsdev_wrapMountDevice("breeze", "/switch/breeze", *sdmc, false)) {
                 vfs_nx_add_device("breeze", VFS_TYPE_FS);
             }
-            // if (!fsdev_wrapMountDevice("cheats", "/switch/breeze/cheats", *sdmc, false)) {
-            //     vfs_nx_add_device("cheats", VFS_TYPE_FS);
-            // }
-            char game_cheat_dir_str[128] = {0};
-            static char game_cheat_dir_path[160] = "/switch/breeze/cheats/";
-            ini_gets("Nx", "game_cheat_dir", "", game_cheat_dir_str, sizeof(game_cheat_dir_str), INI_PATH);
-            strcat(game_cheat_dir_path,game_cheat_dir_str);
-            if (!fsdev_wrapMountDevice(game_cheat_dir_str, game_cheat_dir_path, *sdmc, false)) {
-                vfs_nx_add_device(game_cheat_dir_str, VFS_TYPE_FS);
-            };
+
             char save_id_str[21] = {0};
             ini_gets("Nx", "save_application_id", "", save_id_str, sizeof(save_id_str), INI_PATH);
 
@@ -423,21 +475,15 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool m
                 if (R_SUCCEEDED(accountListAllUsers(uid, 2, &actual_total))) {
                     if (R_SUCCEEDED(fsdev_wrapMountSave("save0", save_id, uid[0]))) {
                         vfs_nx_add_device("save0", VFS_TYPE_FS);
-                    };
+                    }
                     if (R_SUCCEEDED(fsdev_wrapMountSave("save1", save_id, uid[1]))) {
                         vfs_nx_add_device("save1", VFS_TYPE_FS);
-                    };
-                };
+                    }
+                }
                 if (R_SUCCEEDED(fsdev_wrapMountSaveBcat("bcat", bcat_id))) {
                     vfs_nx_add_device("bcat", VFS_TYPE_FS);
                 }
             }
-            static char atm_game_dir_path[160];
-            sprintf(atm_game_dir_path, "/atmosphere/contents/%016lx",save_id);
-            sprintf(game_cheat_dir_str, "atmosphere game contents");
-            if (!fsdev_wrapMountDevice(game_cheat_dir_str, atm_game_dir_path, *sdmc, false)) {
-                vfs_nx_add_device(game_cheat_dir_str, VFS_TYPE_FS);
-            };
         }
         if (mount_misc) {
 #if USE_VFS_GC
@@ -480,6 +526,9 @@ void vfs_nx_init(bool enable_devices, bool save_writable, bool mount_bis, bool m
 
         g_lang_index = g_nacpLanguageTable[Language];
     }
+
+    // Ensure config-driven mounts are set even when mount_devices is disabled
+    vfs_nx_update_config_mounts();
 }
 
 void vfs_nx_exit(void) {
@@ -521,4 +570,20 @@ void vfs_nx_add_device(const char* name, enum VFS_TYPE type) {
     snprintf(g_device[g_device_count].name, sizeof(g_device[g_device_count].name), "%s:", name);
     g_device_type[g_device_count] = type;
     g_device_count++;
+}
+
+void vfs_nx_remove_device(const char* name) {
+    char full_name[32];
+    snprintf(full_name, sizeof(full_name), "%s:", name);
+
+    for (u32 i = 0; i < g_device_count; i++) {
+        if (strcmp(g_device[i].name, full_name) == 0) {
+            for (u32 j = i; j < g_device_count - 1; j++) {
+                g_device[j] = g_device[j + 1];
+                g_device_type[j] = g_device_type[j + 1];
+            }
+            g_device_count--;
+            break;
+        }
+    }
 }

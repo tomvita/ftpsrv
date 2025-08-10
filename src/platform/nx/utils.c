@@ -178,7 +178,7 @@ int fsdev_wrapMountDevice(const char *name, const char* shortcut, FsFileSystem f
             g_fsdev_entries[i].fs = fs;
             g_fsdev_entries[i].shortcut = shortcut;
             g_fsdev_entries[i].own = own;
-            snprintf(g_fsdev_entries[i].path, sizeof(g_fsdev_entries[i].path), name);
+            snprintf(g_fsdev_entries[i].path, sizeof(g_fsdev_entries[i].path), "%s", name);
             return 0;
         }
     }
