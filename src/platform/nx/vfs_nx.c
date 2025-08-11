@@ -368,7 +368,7 @@ void vfs_nx_update_config_mounts(void) {
             }
         }
     }
-
+    if (current_tid != QLAUNCH_TID && current_tid != 0) return;
     static char game_cheat_dir_str[128] = {0};
     char new_game_cheat_dir_str[128] = {0};
     char new_game_cheat_dir_str_tmp[128] = {0};
