@@ -330,16 +330,14 @@ void vfs_nx_update_config_mounts(void) {
     }
 
     if (last_tid != current_tid) {
-        fsdev_wrapUnmountDevice("ams_tid_mount");
-        vfs_nx_remove_device("ams_tid_mount");
-        fsdev_wrapUnmountDevice("breeze_tid_mount");
-        vfs_nx_remove_device("breeze_tid_mount");
-        fsdev_wrapUnmountDevice(name_32);
-        vfs_nx_remove_device(name_32);
-        
-        last_tid = current_tid;
-        
         if (current_tid != 0 && current_tid != QLAUNCH_TID) {
+            last_tid = current_tid;
+            fsdev_wrapUnmountDevice("ams_tid_mount");
+            vfs_nx_remove_device("ams_tid_mount");
+            fsdev_wrapUnmountDevice("breeze_tid_mount");
+            vfs_nx_remove_device("breeze_tid_mount");
+            fsdev_wrapUnmountDevice(name_32);
+            vfs_nx_remove_device(name_32);
             fsdev_wrapUnmountDevice("breeze_cheat_dir");
             vfs_nx_remove_device("breeze_cheat_dir");
             game_cheat_dir_str[0] = '\0';
