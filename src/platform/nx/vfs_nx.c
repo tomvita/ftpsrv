@@ -308,6 +308,8 @@ void vfs_nx_update_config_mounts(void) {
     static char breeze_tid_mount_str[128] = {0};
     static char breeze_name_mount_str[128] = {0};
     static char name_32[32];
+    static char game_cheat_dir_str[128] = {0};
+    static char atm_game_dir_path[160] = {0};
 
     u64 pid, current_tid = 0;
     Result rc;
@@ -334,10 +336,16 @@ void vfs_nx_update_config_mounts(void) {
         vfs_nx_remove_device("breeze_tid_mount");
         fsdev_wrapUnmountDevice(name_32);
         vfs_nx_remove_device(name_32);
-
+        
         last_tid = current_tid;
-
+        
         if (current_tid != 0 && current_tid != QLAUNCH_TID) {
+            fsdev_wrapUnmountDevice("breeze_cheat_dir");
+            vfs_nx_remove_device("breeze_cheat_dir");
+            game_cheat_dir_str[0] = '\0';
+            fsdev_wrapUnmountDevice("atmosphere_cheat_dir");
+            vfs_nx_remove_device("atmosphere_cheat_dir");
+            atm_game_dir_path[0] = '\0';
             struct AppName name;
             NcmContentId id;
             if (R_SUCCEEDED(get_app_name(current_tid, &id, &name))) {
@@ -359,7 +367,7 @@ void vfs_nx_update_config_mounts(void) {
                     
                     sanitize_fs_name(name.str);
                     strncpy(name_32, name.str, 31);
-                    name_32[31] = '\0';
+                    name_32[30] = '\0';
                     snprintf(breeze_name_mount_str, sizeof(breeze_name_mount_str), "/switch/breeze/cheats/%s", name.str);
                     log_file_fwrite("nx: %s=%s", name_32, breeze_name_mount_str);
                     if (!fsdev_wrapMountDevice(name_32, breeze_name_mount_str, *sdmc, false)) {
@@ -369,8 +377,7 @@ void vfs_nx_update_config_mounts(void) {
             }
         }
     }
-    if (current_tid != QLAUNCH_TID && current_tid != 0) return;
-    static char game_cheat_dir_str[128] = {0};
+    
     char new_game_cheat_dir_str[128] = {0};
     char new_game_cheat_dir_str_tmp[128] = {0};
 
@@ -379,16 +386,14 @@ void vfs_nx_update_config_mounts(void) {
     snprintf(new_game_cheat_dir_str, sizeof(new_game_cheat_dir_str), "/switch/breeze/cheats/%s", new_game_cheat_dir_str_tmp);
 
     if (strcmp(game_cheat_dir_str, new_game_cheat_dir_str) != 0) {
-        log_file_fwrite("nx: game_cheat_dir=%s", new_game_cheat_dir_str);
-        // log_file_write("nx: game_cheat_dir changed; updating mount");
-        if (game_cheat_dir_str[0] != '\0') {
-            fsdev_wrapUnmountDevice("breeze_cheat_dir");
-            vfs_nx_remove_device("breeze_cheat_dir");
-        }
-        strcpy(game_cheat_dir_str, new_game_cheat_dir_str);
-        if (game_cheat_dir_str[0] != '\0') {    
+        if (current_tid == 0 || current_tid == QLAUNCH_TID) {    
+            log_file_fwrite("nx: game_cheat_dir=%s", new_game_cheat_dir_str);
+            // log_file_write("nx: game_cheat_dir changed; updating mount");
+            strcpy(game_cheat_dir_str, new_game_cheat_dir_str);
             FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
             if (sdmc) {
+                fsdev_wrapUnmountDevice("breeze_cheat_dir");
+                vfs_nx_remove_device("breeze_cheat_dir");
                 if (!fsdev_wrapMountDevice("breeze_cheat_dir", game_cheat_dir_str, *sdmc, false)) {
                     vfs_nx_add_device("breeze_cheat_dir", VFS_TYPE_FS);
                 }
@@ -396,7 +401,7 @@ void vfs_nx_update_config_mounts(void) {
         }
     }
 
-    static char atm_game_dir_path[160] = {0};
+    
     char new_atm_game_dir_path[160] = {0};
     char save_id_str[21] = {0};
     ini_gets("Nx", "save_application_id", "0", save_id_str, sizeof(save_id_str), INI_PATH);
@@ -406,16 +411,15 @@ void vfs_nx_update_config_mounts(void) {
         sprintf(new_atm_game_dir_path, "/atmosphere/contents/%016lx/cheats", (unsigned long)save_id);
     }
     if (strcmp(atm_game_dir_path, new_atm_game_dir_path) != 0) {
-        log_file_fwrite("nx: atmosphere_cheat_dir=%s", new_atm_game_dir_path);
-        // log_file_write("nx: atmosphere_cheat_dir changed; updating mount");
-        if (atm_game_dir_path[0] != '\0') {
-            fsdev_wrapUnmountDevice("atmosphere_cheat_dir");
-            vfs_nx_remove_device("atmosphere_cheat_dir");
-        }
-        strcpy(atm_game_dir_path, new_atm_game_dir_path);
-        if (atm_game_dir_path[0] != '\0') {
+        
+        if (current_tid == 0 || current_tid == QLAUNCH_TID) {
+            log_file_fwrite("nx: atmosphere_cheat_dir=%s", new_atm_game_dir_path);
+            // log_file_write("nx: atmosphere_cheat_dir changed; updating mount");
+            strcpy(atm_game_dir_path, new_atm_game_dir_path);
             FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
             if (sdmc) {
+                fsdev_wrapUnmountDevice("atmosphere_cheat_dir");
+                vfs_nx_remove_device("atmosphere_cheat_dir");
                 if (!fsdev_wrapMountDevice("atmosphere_cheat_dir", atm_game_dir_path, *sdmc, false)) {
                     vfs_nx_add_device("atmosphere_cheat_dir", VFS_TYPE_FS);
                 }
