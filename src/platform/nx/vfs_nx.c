@@ -356,7 +356,8 @@ void vfs_nx_update_config_mounts(void) {
                     if (!fsdev_wrapMountDevice("breeze_tid_mount", breeze_tid_mount_str, *sdmc, false)) {
                         vfs_nx_add_device("breeze_tid_mount", VFS_TYPE_FS);
                     }
-
+                    
+                    sanitize_fs_name(name.str);
                     strncpy(name_32, name.str, 31);
                     name_32[31] = '\0';
                     snprintf(breeze_name_mount_str, sizeof(breeze_name_mount_str), "/switch/breeze/cheats/%s", name.str);

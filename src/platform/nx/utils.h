@@ -26,6 +26,7 @@ void fsdev_wrapUnmountAll(void);
 void commit_save(const char* path);
 
 void led_flash(void);
+void sanitize_fs_name(char* name);
 
 #ifdef __cplusplus
 }

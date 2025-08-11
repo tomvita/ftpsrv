@@ -225,3 +225,63 @@ void led_flash(void) {
         }
     }
 }
+
+void sanitize_fs_name(char* name) {
+    if (!name) return;
+    char* d = name;
+    char* s = name;
+    while (*s) {
+        if (((unsigned char)*s) >= 0x80) {
+            // "®" is 0xC2 0xAE
+            if ((unsigned char)*s == 0xC2 && (unsigned char)*(s + 1) == 0xAE) {
+                s += 2;
+                continue;
+            }
+            // "–" is 0xE2 0x80 0x93
+            if ((unsigned char)*s == 0xE2 && (unsigned char)*(s + 1) == 0x80 && (unsigned char)*(s + 2) == 0x93) {
+                s += 3;
+                continue;
+            }
+            // "™" is 0xE2 0x84 0xA2
+            if ((unsigned char)*s == 0xE2 && (unsigned char)*(s + 1) == 0x84 && (unsigned char)*(s + 2) == 0xA2) {
+                s += 3;
+                continue;
+            }
+            // "é" is 0xC3 0xA9
+            if ((unsigned char)*s == 0xC3 && (unsigned char)*(s + 1) == 0xA9) {
+                *d++ = 'e';
+                s += 2;
+                continue;
+            }
+
+            // Generic multi-byte char handling from GetLegacySanitizedTitleName
+            *d++ = '\'';
+            if ((*s & 0xE0) == 0xC0)
+                s += 2;
+            else if ((*s & 0xF0) == 0xE0)
+                s += 3;
+            else if ((*s & 0xF8) == 0xF0)
+                s += 4;
+            else
+                s++;  // Should not happen with valid UTF-8
+        } else {
+            switch (*s) {
+                case ':':
+                case '\\':
+                case '/':
+                case '"':
+                case '-':
+                    s++;
+                    break;
+                // case ' ':
+                //     *d++ = '_';
+                //     s++;
+                //     break;
+                default:
+                    *d++ = *s++;
+                    break;
+            }
+        }
+    }
+    *d = '\0';
+}
