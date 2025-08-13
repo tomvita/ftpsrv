@@ -332,6 +332,10 @@ void vfs_nx_update_config_mounts(void) {
     if (last_tid != current_tid) {
         if (current_tid != 0 && current_tid != QLAUNCH_TID) {
             last_tid = current_tid;
+            char tid_str[21] = {0};
+            snprintf(tid_str, sizeof(tid_str), "0x%016lX", current_tid);
+            ini_puts("Nx", "save_application_id", tid_str, INI_PATH);
+            ini_puts("Nx", "bcat_application_id", tid_str, INI_PATH);
             fsdev_wrapUnmountDevice("ams_tid_mount");
             vfs_nx_remove_device("ams_tid_mount");
             fsdev_wrapUnmountDevice("breeze_tid_mount");
@@ -347,7 +351,6 @@ void vfs_nx_update_config_mounts(void) {
             struct AppName name;
             NcmContentId id;
             if (R_SUCCEEDED(get_app_name(current_tid, &id, &name))) {
-                char mount_path[FS_MAX_PATH];
                 FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
 
                 if (sdmc) {
