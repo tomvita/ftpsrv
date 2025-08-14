@@ -494,29 +494,32 @@ static void unmount_save_fs(const struct SavePathData* d) {
         }
     }
 }
-
+static bool screen_tid;
 static struct SavePathData get_type(const char* path) {
     struct SavePathData data = {0};
-    if (!strcmp(path, "save:")) {
+    if (strncmp(path, "current_game_save:", strlen("current_game_save:")) == 0) {
+        screen_tid = true;
+    } else if (strncmp(path, "save:", strlen("save:")) == 0){
+        screen_tid = false;
+    } 
+    if (!strcmp(path, "save:") || !strcmp(path, "current_game_save:")) {
         data.type = SaveDirType_Root;
     } else {
         const char* dilem = strchr(path, '[');
         data.space_id = FsSaveDataSpaceId_User;
-        if (!strncmp(path, "save:/current_game_save", strlen("save:/current_game_save"))) {
-            data.type = SaveDirType_CurrentGameSave;
-        } else if (!strncmp(path, "save:/bcat", strlen("save:/bcat"))) {
+        if (!strncmp(path, "save:/bcat", strlen("save:/bcat")) || !strncmp(path, "current_game_save:/bcat", strlen("current_game_save:/bcat"))) {
             data.data_type = FsSaveDataType_Bcat;
             data.space_id = FsSaveDataSpaceId_User;
             data.type = SaveDirType_User1;
-        } else if (!strncmp(path, "save:/cache", strlen("save:/cache"))) {
+        } else if (!strncmp(path, "save:/cache", strlen("save:/cache")) || !strncmp(path, "current_game_save:/cache", strlen("current_game_save:/cache"))) {
             data.data_type = FsSaveDataType_Cache;
             data.space_id = FsSaveDataSpaceId_SdUser;
             data.type = SaveDirType_User1;
-        } else if (!strncmp(path, "save:/device", strlen("save:/device"))) {
+        } else if (!strncmp(path, "save:/device", strlen("save:/device")) || !strncmp(path, "current_game_save:/device", strlen("current_game_save:/device"))) {
             data.data_type = FsSaveDataType_Device;
             data.space_id = FsSaveDataSpaceId_User;
             data.type = SaveDirType_User1;
-        } else if (!strncmp(path, "save:/system", strlen("save:/system"))) {
+        } else if (!strncmp(path, "save:/system", strlen("save:/system")) || !strncmp(path, "current_game_save:/system", strlen("current_game_save:/system"))) {
             data.data_type = FsSaveDataType_System;
             data.space_id = FsSaveDataSpaceId_System;
             data.type = SaveDirType_User1;
@@ -806,7 +809,7 @@ static const char* vfs_save_readdir(void* user, void* user_entry) {
             NcmContentId id;
             struct AppName name;
             const char* ext = f->data.type == SaveDirType_File ? "" : ".zip";
-            if (f->data.type == SaveDirType_CurrentGameSave) {
+            if (screen_tid) {
                 u64 tid = 0;
                 // a simple ftp command can do the work for us ;)
                 char tid_buf[0x40] = {0};
@@ -814,32 +817,20 @@ static const char* vfs_save_readdir(void* user, void* user_entry) {
                 if (tid_buf[0]) {
                     tid = strtoull(tid_buf, NULL, 0x10);
                 }
-
-                if (tid && tid != QLAUNCH_TID && entry->info.application_id == tid) {
-                     if (R_FAILED(rc = get_app_name(entry->info.application_id, &id, &name))) {
-                        snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.application_id, ext);
-                    } else {
-                        if (f->data.type == SaveDirType_Zip) {
-                            utilsReplaceIllegalCharacters(name.str, true);
-                        }
-                        snprintf(entry->name, sizeof(entry->name), "%s [%016lX]%s", name.str, entry->info.application_id, ext);
-                    }
-                } else {
-                    return vfs_save_readdir(user, user_entry);
-                }
+                log_file_fwrite("screening for tid %016lx read entry %s data: %s space: %s %u index: %u rank %u\n",tid, name.str, entry->info.save_data_index, entry->info.save_data_rank);
+                if (tid ==0 || tid == QLAUNCH_TID || entry->info.application_id != tid) return "";  
+                // if (entry->info.application_id == tid) screen_tid = false; // only screen once
+            } 
+            if (entry->info.save_data_type == FsSaveDataType_System || entry->info.save_data_type == FsSaveDataType_SystemBcat) {
+                snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.system_save_data_id, ext);
+            } else if (R_FAILED(rc = get_app_name(entry->info.application_id, &id, &name))) {
+                snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.application_id, ext);
             } else {
-                if (entry->info.save_data_type == FsSaveDataType_System || entry->info.save_data_type == FsSaveDataType_SystemBcat) {
-                    snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.system_save_data_id, ext);
-                } else if (R_FAILED(rc = get_app_name(entry->info.application_id, &id, &name))) {
-                    snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.application_id, ext);
-                } else {
-                    if (f->data.type == SaveDirType_Zip) {
-                        utilsReplaceIllegalCharacters(name.str, true);
-                    }
-                    snprintf(entry->name, sizeof(entry->name), "%s [%016lX]%s", name.str, entry->info.application_id, ext);
+                if (f->data.type == SaveDirType_Zip) {
+                    utilsReplaceIllegalCharacters(name.str, true);
                 }
+                snprintf(entry->name, sizeof(entry->name), "%s [%016lX]%s", name.str, entry->info.application_id, ext);
             }
-
             log_file_fwrite("read entry %s data: %s space: %s %u index: %u rank %u\n", name.str, entry->info.save_data_index, entry->info.save_data_rank);
             return entry->name;
         }
