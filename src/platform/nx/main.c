@@ -30,7 +30,7 @@ struct CallbackData {
     char msg[1024];
 };
 
-static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* INI_PATH = "/switch/breeze/config.ini";
 static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 static bool g_led_enabled = false;
@@ -152,6 +152,7 @@ int main(int argc, char** argv) {
     // get nx config
     bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
     bool mount_bis = ini_getbool("Nx", "mount_bis", 0, INI_PATH);
+    bool mount_breeze_devices = ini_getbool("Nx", "mount_breeze_devices", 1, INI_PATH);
     bool save_writable = ini_getbool("Nx", "save_writable", 0, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
     bool skip_ascii_convert = ini_getbool("Nx", "skip_ascii_convert", 0, INI_PATH);
@@ -167,6 +168,7 @@ int main(int argc, char** argv) {
     log_enabled = ini_getbool("Nx-App", "log", log_enabled, INI_PATH);
     mount_devices = ini_getbool("Nx-App", "mount_devices", mount_devices, INI_PATH);
     mount_bis = ini_getbool("Nx-App", "mount_bis", mount_bis, INI_PATH);
+    mount_breeze_devices = ini_getbool("Nx-App", "mount_breeze_devices", mount_breeze_devices, INI_PATH);
     save_writable = ini_getbool("Nx-App", "save_writable", save_writable, INI_PATH);
     g_led_enabled = ini_getbool("Nx-App", "led", g_led_enabled, INI_PATH);
 
@@ -188,7 +190,7 @@ int main(int argc, char** argv) {
         return error_loop("failed to get current ip address");
     }
 
-    vfs_nx_init(NULL, mount_devices, save_writable, mount_bis, skip_ascii_convert);
+    vfs_nx_init(NULL, mount_devices, mount_breeze_devices, save_writable, mount_bis, skip_ascii_convert);
 
     const struct in_addr addr = {ip};
     printf(TEXT_YELLOW "ip: %s\n", inet_ntoa(addr));

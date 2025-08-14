@@ -287,6 +287,7 @@ else()
             src/platform/nx/custom_commands.c
             src/platform/nx/utils.c
             src/log/log.c
+            src/platform/nx/vfs/vfs_nx_cheats.c
         )
 
         target_compile_definitions(ftpsrv PUBLIC
@@ -423,8 +424,8 @@ else()
             USE_VFS_GC=$<BOOL:${USE_VFS_GC}>
         )
 
-        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B)
-        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B/flags)
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/420000000000012B)
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/420000000000012B/flags)
 
         configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nx/sysftp.json ${CMAKE_CURRENT_BINARY_DIR}/sysftp.json)
 
@@ -432,14 +433,14 @@ else()
             TARGET ftpexe POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nx/toolbox.json
-                ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B/toolbox.json
+                ${CMAKE_CURRENT_BINARY_DIR}/420000000000012B/toolbox.json
 
             COMMAND ${CMAKE_COMMAND} -E touch
-                ${CMAKE_CURRENT_BINARY_DIR}/420000000000011B/flags/boot2.flag
+                ${CMAKE_CURRENT_BINARY_DIR}/420000000000012B/flags/boot2.flag
         )
 
         nx_create_exefs(sysftp
-            OUTPUT 420000000000011B/exefs.nsp
+            OUTPUT 420000000000012B/exefs.nsp
             CONFIG ${CMAKE_CURRENT_BINARY_DIR}/sysftp.json
         )
     elseif(NINTENDO_DS)

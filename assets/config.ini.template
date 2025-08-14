@@ -7,6 +7,7 @@
 #######################################################################
 
 [Login]
+mount_breeze_devices=0
 # disabled by default, do not enable if using ldn_mitm as
 # it's a security risk - you have been warned!
 anon = 0

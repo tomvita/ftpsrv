@@ -24,6 +24,7 @@ int fsdev_wrapMountDevice(const char *name, const char* shortcut, FsFileSystem f
 void fsdev_wrapUnmountAll(void);
 
 void led_flash(void);
+void sanitize_fs_name(char* name);
 
 #ifdef __cplusplus
 }

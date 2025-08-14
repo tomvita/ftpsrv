@@ -9,7 +9,7 @@
 #include <switch/services/bsd.h>
 #include <minIni.h>
 
-static const char* INI_PATH = "/config/ftpsrv/config.ini";
+static const char* INI_PATH = "/switch/breeze/config.ini";
 static const char* LOG_PATH = "/config/ftpsrv/log.txt";
 static struct FtpSrvConfig g_ftpsrv_config = {0};
 static bool g_led_enabled = false;
@@ -43,6 +43,7 @@ int main(void) {
     // get nx config
     bool mount_devices = ini_getbool("Nx", "mount_devices", 1, INI_PATH);
     bool mount_bis = ini_getbool("Nx", "mount_bis", 0, INI_PATH);
+    bool mount_breeze_devices = ini_getbool("Nx", "mount_breeze_devices", 1, INI_PATH);
     bool save_writable = ini_getbool("Nx", "save_writable", 0, INI_PATH);
     g_led_enabled = ini_getbool("Nx", "led", 1, INI_PATH);
     bool skip_ascii_convert = ini_getbool("Nx", "skip_ascii_convert", 0, INI_PATH);
@@ -58,6 +59,7 @@ int main(void) {
     log_enabled = ini_getbool("Nx-Sys", "log", log_enabled, INI_PATH);
     mount_devices = ini_getbool("Nx-Sys", "mount_devices", mount_devices, INI_PATH);
     mount_bis = ini_getbool("Nx-Sys", "mount_bis", mount_bis, INI_PATH);
+    mount_breeze_devices = ini_getbool("Nx-Sys", "mount_breeze_devices", mount_breeze_devices, INI_PATH);
     save_writable = ini_getbool("Nx-Sys", "save_writable", save_writable, INI_PATH);
     g_led_enabled = ini_getbool("Nx-Sys", "led", g_led_enabled, INI_PATH);
 
@@ -71,7 +73,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
-    vfs_nx_init(NULL, mount_devices, save_writable, mount_bis, skip_ascii_convert);
+    vfs_nx_init(NULL, mount_devices, mount_breeze_devices, save_writable, mount_bis, skip_ascii_convert);
 
     int timeout = -1;
     if (g_ftpsrv_config.timeout) {

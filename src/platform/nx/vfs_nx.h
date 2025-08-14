@@ -10,7 +10,7 @@ extern "C" {
 #include <sys/stat.h>
 #include <switch.h>
 
-#include "ftpsrv.h"
+#include "ftpsrv_vfs.h"
 #include "vfs/vfs_nx_none.h"
 #include "vfs/vfs_nx_root.h"
 #include "vfs/vfs_nx_fs.h"
@@ -41,6 +41,7 @@ extern "C" {
 #include "vfs/vfs_nx_stdio.h"
 #include "vfs/vfs_nx_hdd.h"
 #endif
+#include "vfs/vfs_nx_cheats.h"
 
 enum VFS_TYPE {
     VFS_TYPE_NONE,
@@ -60,6 +61,7 @@ enum VFS_TYPE {
     VFS_TYPE_HDD, // list hdd, uses unistd
 #endif
     VFS_TYPE_USER,
+    VFS_TYPE_CHEATS,
 };
 
 struct FtpVfsFile {
@@ -81,6 +83,7 @@ struct FtpVfsFile {
         struct VfsHddFile usbhsfs;
 #endif
         void* user;
+        void* cheats;
     };
 };
 
@@ -103,6 +106,7 @@ struct FtpVfsDir {
         struct VfsHddDir usbhsfs;
 #endif
         void* user;
+        void* cheats;
     };
 };
 
@@ -124,6 +128,7 @@ struct FtpVfsDirEntry {
         struct VfsStdioDirEntry stdio;
         struct VfsHddDirEntry usbhsfs;
 #endif
+        void* cheats;
     };
 };
 
@@ -163,7 +168,7 @@ struct VfsNxCustomPath {
     FtpVfs* func;
 };
 
-void vfs_nx_init(const struct VfsNxCustomPath* custom, bool enable_devices, bool save_writable, bool mount_bis, bool skip_ascii_convert);
+void vfs_nx_init(const struct VfsNxCustomPath* custom, bool enable_devices, bool mount_breeze_devices, bool save_writable, bool mount_bis, bool skip_ascii_convert);
 void vfs_nx_exit(void);
 void vfs_nx_add_device(const char* name, enum VFS_TYPE type);
 

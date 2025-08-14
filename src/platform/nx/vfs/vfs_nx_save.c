@@ -5,6 +5,8 @@
 
 #include "ftpsrv_vfs.h"
 #include "vfs_nx_save.h"
+#include "../vfs_nx.h"
+#include "../custom_commands.h"
 #include "../utils.h"
 #include "log/log.h"
 #include <errno.h>
@@ -18,6 +20,8 @@
 #define FILE_HEADER_SIG 0x2014B50
 #define DATA_DESCRIPTOR_SIG 0x8074B50
 #define END_RECORD_SIG 0x6054B50
+
+#define QLAUNCH_TID 0x0100000000001000ULL
 
 #pragma pack(push,1)
 typedef struct mmz_LocalHeader {
@@ -498,7 +502,9 @@ static struct SavePathData get_type(const char* path) {
     } else {
         const char* dilem = strchr(path, '[');
         data.space_id = FsSaveDataSpaceId_User;
-        if (!strncmp(path, "save:/bcat", strlen("save:/bcat"))) {
+        if (!strncmp(path, "save:/current_game_save", strlen("save:/current_game_save"))) {
+            data.type = SaveDirType_CurrentGameSave;
+        } else if (!strncmp(path, "save:/bcat", strlen("save:/bcat"))) {
             data.data_type = FsSaveDataType_Bcat;
             data.space_id = FsSaveDataSpaceId_User;
             data.type = SaveDirType_User1;
@@ -800,15 +806,38 @@ static const char* vfs_save_readdir(void* user, void* user_entry) {
             NcmContentId id;
             struct AppName name;
             const char* ext = f->data.type == SaveDirType_File ? "" : ".zip";
-            if (entry->info.save_data_type == FsSaveDataType_System || entry->info.save_data_type == FsSaveDataType_SystemBcat) {
-                snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.system_save_data_id, ext);
-            } else if (R_FAILED(rc = get_app_name(entry->info.application_id, &id, &name))) {
-                snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.application_id, ext);
-            } else {
-                if (f->data.type == SaveDirType_Zip) {
-                    utilsReplaceIllegalCharacters(name.str, true);
+            if (f->data.type == SaveDirType_CurrentGameSave) {
+                u64 tid = 0;
+                // a simple ftp command can do the work for us ;)
+                char tid_buf[0x40] = {0};
+                ftp_custom_cmd_TID(NULL, NULL, tid_buf, sizeof(tid_buf));
+                if (tid_buf[0]) {
+                    tid = strtoull(tid_buf, NULL, 0x10);
                 }
-                snprintf(entry->name, sizeof(entry->name), "%s [%016lX]%s", name.str, entry->info.application_id, ext);
+
+                if (tid && tid != QLAUNCH_TID && entry->info.application_id == tid) {
+                     if (R_FAILED(rc = get_app_name(entry->info.application_id, &id, &name))) {
+                        snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.application_id, ext);
+                    } else {
+                        if (f->data.type == SaveDirType_Zip) {
+                            utilsReplaceIllegalCharacters(name.str, true);
+                        }
+                        snprintf(entry->name, sizeof(entry->name), "%s [%016lX]%s", name.str, entry->info.application_id, ext);
+                    }
+                } else {
+                    return vfs_save_readdir(user, user_entry);
+                }
+            } else {
+                if (entry->info.save_data_type == FsSaveDataType_System || entry->info.save_data_type == FsSaveDataType_SystemBcat) {
+                    snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.system_save_data_id, ext);
+                } else if (R_FAILED(rc = get_app_name(entry->info.application_id, &id, &name))) {
+                    snprintf(entry->name, sizeof(entry->name), "[%016lX]%s", entry->info.application_id, ext);
+                } else {
+                    if (f->data.type == SaveDirType_Zip) {
+                        utilsReplaceIllegalCharacters(name.str, true);
+                    }
+                    snprintf(entry->name, sizeof(entry->name), "%s [%016lX]%s", name.str, entry->info.application_id, ext);
+                }
             }
 
             log_file_fwrite("read entry %s data: %s space: %s %u index: %u rank %u\n", name.str, entry->info.save_data_index, entry->info.save_data_rank);
@@ -832,6 +861,7 @@ static int vfs_save_dirlstat(void* user, const void* user_entry, const char* pat
         case SaveDirType_Root:
         case SaveDirType_User1:
         case SaveDirType_File:
+        case SaveDirType_CurrentGameSave:
             st->st_nlink = 1;
             st->st_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH;
             return 0;
@@ -867,6 +897,7 @@ static int vfs_save_closedir(void* user) {
 
         case SaveDirType_File:
         case SaveDirType_Zip:
+        case SaveDirType_CurrentGameSave:
             fsSaveDataInfoReaderClose(&f->r);
             break;
 
@@ -893,6 +924,7 @@ static int vfs_save_stat(const char* path, struct stat* st) {
         case SaveDirType_User1:
         case SaveDirType_File:
         case SaveDirType_Zip:
+        case SaveDirType_CurrentGameSave:
             st->st_nlink = 1;
             st->st_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH;
             return 0;

@@ -14,6 +14,7 @@ enum SaveDirType {
     SaveDirType_Invalid,
     SaveDirType_Root,
     SaveDirType_User1,
+    SaveDirType_CurrentGameSave,
     SaveDirType_File,
     SaveDirType_Zip,
     SaveDirType_FileApp,

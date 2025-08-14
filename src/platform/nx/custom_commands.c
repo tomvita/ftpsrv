@@ -1,6 +1,7 @@
 #include "custom_commands.h"
 #include "reboot_to_payload/reboot_to_payload.h"
 #include "rtc/max77620-rtc.h"
+#include "vfs_nx.h"
 #include "utils.h"
 #include "minIni.h"
 #include "ftpsrv_vfs.h"
@@ -399,7 +400,7 @@ static int ftp_custom_cmd_SHUT(void* userdata, const char* data, char* msg_buf, 
     return code;
 }
 
-static int ftp_custom_cmd_TID(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
+int ftp_custom_cmd_TID(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
     Result rc;
     int code = FTP_DEFAULT_ERROR_CODE;
 
