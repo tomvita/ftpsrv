@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#ifdef __INTELLISENSE__
+    #define USE_VFS_SAVE 1
+    #define USE_VFS_STORAGE 1
+    #define USE_VFS_GC 1
+    #define USE_VFS_USBHSFS 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

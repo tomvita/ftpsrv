@@ -6,7 +6,7 @@
 #include "ftpsrv_vfs.h"
 #include "log/log.h"
 #include "utils.h"
-
+#include "vfs_nx.h"
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
