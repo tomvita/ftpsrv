@@ -24,6 +24,7 @@ enum FTP_API_LOOP_ERROR {
 
 typedef void (*FtpSrvLogCallback)(enum FTP_API_LOG_TYPE, const char*);
 typedef void (*FtpSrvProgressCallback)(void);
+typedef void (*FtpSrvLoginCallback)(void);
 
 struct FtpSrvCustomCommand {
     char name[5];
@@ -54,6 +55,7 @@ struct FtpSrvConfig {
 
     FtpSrvLogCallback log_callback;
     FtpSrvProgressCallback progress_callback;
+    FtpSrvLoginCallback login_callback;
 };
 
 int ftpsrv_init(const struct FtpSrvConfig* cfg);

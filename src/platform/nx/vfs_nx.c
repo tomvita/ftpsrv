@@ -334,6 +334,69 @@ void utilsReplaceIllegalCharacters(char *str, bool ascii_only)
 
     *ptr2 = '\0';
 }
+void vfs_nx_remove_device(const char* name) {
+    char full_name[32];
+    snprintf(full_name, sizeof(full_name), "%s:", name);
+
+    for (u32 i = 0; i < g_device_count; i++) {
+        if (strcmp(g_device[i].name, full_name) == 0) {
+            for (u32 j = i; j < g_device_count - 1; j++) {
+                g_device[j] = g_device[j + 1];
+                g_device_type[j] = g_device_type[j + 1];
+            }
+            g_device_count--;
+            break;
+        }
+    }
+}
+void update_tid_ini(u64* tid);
+void vfs_nx_update_config_mounts(void) {
+    static u64 last_tid = 0;
+    static char ams_tid_mount_str[128] = { 0 };
+    static char breeze_tid_mount_str[128] = { 0 };
+    static char breeze_name_mount_str[128] = { 0 };
+    static char name_32[32] = { 0 };
+    static const char* ams_tid_mount = "ams_cur_game_title_dir";  // 24 chars + 1 = 25 bytes
+    static const char* breeze_tid_mount = "breeze_cur_game_title_dir"; // 27 chars + 1 = 28 bytes
+    u64 current_tid = 0;
+    update_tid_ini(&current_tid);
+    struct AppName name;
+    NcmContentId id;
+    if (last_tid != current_tid) {
+        last_tid = current_tid;
+        if (R_SUCCEEDED(get_app_name(current_tid, &id, &name))) {
+            FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
+            if (sdmc) {
+                fsdev_wrapUnmountDevice(ams_tid_mount);
+                vfs_nx_remove_device(ams_tid_mount);
+                fsdev_wrapUnmountDevice(breeze_tid_mount);
+                vfs_nx_remove_device(breeze_tid_mount);
+                fsdev_wrapUnmountDevice(name_32);
+                vfs_nx_remove_device(name_32);
+                snprintf(ams_tid_mount_str, sizeof(ams_tid_mount_str), "/atmosphere/contents/%016lx", current_tid);
+                log_file_fwrite("nx: ams_tid_mount=%s", ams_tid_mount_str);
+                if (!fsdev_wrapMountDevice(ams_tid_mount, ams_tid_mount_str, *sdmc, false)) {
+                    vfs_nx_add_device(ams_tid_mount, VFS_TYPE_FS);
+                }
+
+                snprintf(breeze_tid_mount_str, sizeof(breeze_tid_mount_str), "/switch/breeze/cheats/%016lx", current_tid);
+                log_file_fwrite("nx: breeze_tid_mount=%s", breeze_tid_mount_str);
+                if (!fsdev_wrapMountDevice(breeze_tid_mount, breeze_tid_mount_str, *sdmc, false)) {
+                    vfs_nx_add_device(breeze_tid_mount, VFS_TYPE_FS);
+                }
+
+                sanitize_fs_name(name.str);
+                strncpy(name_32, name.str, 31);
+                name_32[30] = '\0';
+                snprintf(breeze_name_mount_str, sizeof(breeze_name_mount_str), "/switch/breeze/cheats/%s", name.str);
+                log_file_fwrite("nx: %s=%s", name_32, breeze_name_mount_str);
+                if (!fsdev_wrapMountDevice(name_32, breeze_name_mount_str, *sdmc, false)) {
+                    vfs_nx_add_device(name_32, VFS_TYPE_FS);
+                }
+            }
+        }
+    }
+}
 
 struct MountEntry {
     const char* name;

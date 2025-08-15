@@ -21,6 +21,7 @@ Result fsdev_wrapMountSaveBcat(const char* path, u64 id);
 FsFileSystem* fsdev_wrapGetDeviceFileSystem(const char* name);
 int fsdev_wrapTranslatePath(const char *path, FsFileSystem** device, char *outpath);
 int fsdev_wrapMountDevice(const char *name, const char* shortcut, FsFileSystem fs, bool own);
+void fsdev_wrapUnmountDevice(const char* name);
 void fsdev_wrapUnmountAll(void);
 
 void led_flash(void);

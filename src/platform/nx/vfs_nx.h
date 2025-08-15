@@ -172,6 +172,7 @@ struct VfsNxCustomPath {
 
 void vfs_nx_init(const struct VfsNxCustomPath* custom, bool enable_devices, bool mount_breeze_devices, bool save_writable, bool mount_bis, bool skip_ascii_convert);
 void vfs_nx_exit(void);
+void vfs_nx_update_config_mounts(void);
 void vfs_nx_add_device(const char* name, enum VFS_TYPE type);
 
 Result get_app_name(u64 app_id, NcmContentId* id, struct AppName* name);

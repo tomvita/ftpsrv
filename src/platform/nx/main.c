@@ -4,6 +4,7 @@
  */
 #include <ftpsrv.h>
 #include <ftpsrv_vfs.h>
+#include "vfs_nx.h"
 #include "utils.h"
 #include "log/log.h"
 #include "custom_commands.h"
@@ -141,6 +142,7 @@ int main(int argc, char** argv) {
     g_ftpsrv_config.custom_command_count = CUSTOM_COMMANDS_SIZE;
     g_ftpsrv_config.log_callback = ftp_log_callback;
     g_ftpsrv_config.progress_callback = ftp_progress_callback;
+    g_ftpsrv_config.login_callback = vfs_nx_update_config_mounts;
     g_ftpsrv_config.anon = ini_getbool("Login", "anon", 0, INI_PATH);
     int user_len = ini_gets("Login", "user", "", g_ftpsrv_config.user, sizeof(g_ftpsrv_config.user), INI_PATH);
     int pass_len = ini_gets("Login", "pass", "", g_ftpsrv_config.pass, sizeof(g_ftpsrv_config.pass), INI_PATH);
