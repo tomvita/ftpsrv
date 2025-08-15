@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "minIni.h"
 
 #define min(x, y) ((x) < (y) ? (x) : (y))
 
@@ -761,7 +762,31 @@ static int vfs_save_opendir(void* user, const char* path) {
     f->is_valid = 1;
     return 0;
 }
+static const char* INI_PATH = "/switch/breeze/config.ini";
+static const char* TID_ = "save_application_id";
+void update_tid_ini(u64 * tid) {
+    
+    char tid_buf[0x40] = { 0 };
+    ftp_custom_cmd_TID(NULL, NULL, tid_buf, sizeof(tid_buf));
+    if (tid_buf[0]) {
+        *tid = strtoull(tid_buf, NULL, 0x10);
+    } else *tid = 0;
 
+    char loaded_tid_buffer[17];
+    ini_gets("Nx", TID_, "0", loaded_tid_buffer, sizeof(loaded_tid_buffer), INI_PATH);
+    u64 loaded_tid = strtoull(loaded_tid_buffer, NULL, 16);
+
+    if (*tid == 0 || *tid == QLAUNCH_TID) {
+        *tid = loaded_tid;
+        return;
+    }
+    
+    if (loaded_tid != *tid) {
+        char new_tid_buffer[17];
+        sprintf(new_tid_buffer, "%016lX", *tid);
+        ini_puts("Nx", TID_, new_tid_buffer, INI_PATH);
+    }
+}
 static const char* vfs_save_readdir(void* user, void* user_entry) {
     struct VfsSaveDir* f = user;
     struct VfsSaveDirEntry* entry = user_entry;
@@ -811,14 +836,9 @@ static const char* vfs_save_readdir(void* user, void* user_entry) {
             const char* ext = f->data.type == SaveDirType_File ? "" : ".zip";
             if (screen_tid) {
                 u64 tid = 0;
-                // a simple ftp command can do the work for us ;)
-                char tid_buf[0x40] = {0};
-                ftp_custom_cmd_TID(NULL, NULL, tid_buf, sizeof(tid_buf));
-                if (tid_buf[0]) {
-                    tid = strtoull(tid_buf, NULL, 0x10);
-                }
+                update_tid_ini(&tid);
                 log_file_fwrite("screening for tid %016lx read entry %s data: %s space: %s %u index: %u rank %u\n",tid, name.str, entry->info.save_data_index, entry->info.save_data_rank);
-                if (tid ==0 || tid == QLAUNCH_TID || entry->info.application_id != tid) return "";  
+                if (entry->info.application_id != tid || tid == 0) return "";
                 // if (entry->info.application_id == tid) screen_tid = false; // only screen once
             } 
             if (entry->info.save_data_type == FsSaveDataType_System || entry->info.save_data_type == FsSaveDataType_SystemBcat) {
