@@ -356,8 +356,8 @@ void vfs_nx_update_config_mounts(void) {
     static char breeze_tid_mount_str[128] = { 0 };
     static char breeze_name_mount_str[128] = { 0 };
     static char name_32[32] = { 0 };
-    static const char* ams_tid_mount = "ams_cur_game_title_dir";  // 24 chars + 1 = 25 bytes
-    static const char* breeze_tid_mount = "breeze_cur_game_title_dir"; // 27 chars + 1 = 28 bytes
+    static const char* ams_tid_mount = "current_game_ams_tid_dir";  
+    static const char* breeze_tid_mount = "current_game_breeze_tid_dir"; 
     u64 current_tid = 0;
     update_tid_ini(&current_tid);
     struct AppName name;
