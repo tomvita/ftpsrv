@@ -396,6 +396,35 @@ void vfs_nx_update_config_mounts(void) {
             }
         }
     }
+    static char day_path[32];
+    time_t now = time(NULL);
+    struct tm* local_time = localtime(&now);
+    static char current_day_path[32];
+    static const char* album_nand_today = "album_nand_today";
+    static const char* album_sd_today = "album_sd_today";
+    strftime(current_day_path, sizeof(current_day_path), "/%Y/%m/%d", local_time);
+    if (strcmp(day_path, current_day_path) != 0) {
+        strncpy(day_path, current_day_path, sizeof(day_path));
+
+        fsdev_wrapUnmountDevice(album_nand_today);
+        vfs_nx_remove_device(album_nand_today);
+        fsdev_wrapUnmountDevice(album_sd_today);
+        vfs_nx_remove_device(album_sd_today);
+
+        char album_path[FS_MAX_PATH];
+        FsFileSystem* album_nand = fsdev_wrapGetDeviceFileSystem("album_nand");
+        if (album_nand) {
+            if (!fsdev_wrapMountDevice(album_nand_today, current_day_path, *album_nand, false)) {
+                vfs_nx_add_device(album_nand_today, VFS_TYPE_FS);
+            }
+        }
+        FsFileSystem* album_sd = fsdev_wrapGetDeviceFileSystem("album_sd");
+        if (album_sd) {
+            if (!fsdev_wrapMountDevice(album_sd_today, current_day_path, *album_sd, false)) {
+                vfs_nx_add_device(album_sd_today, VFS_TYPE_FS);
+            }
+        }
+    }
 }
 
 struct MountEntry {
@@ -424,11 +453,7 @@ void vfs_nx_init(const struct VfsNxCustomPath* custom, bool mount_devices, bool 
             vfs_nx_add_device("album_sd", VFS_TYPE_FS);
         }
 
-        time_t now = time(NULL);
-        struct tm* local_time = localtime(&now);
-        static char current_day_path[32];
-        strftime(current_day_path, sizeof(current_day_path), "/%Y/%m/%d", local_time);
-
+        
         
         // add some shortcuts.
         FsFileSystem* sdmc = fsdev_wrapGetDeviceFileSystem("sdmc");
@@ -447,23 +472,8 @@ void vfs_nx_init(const struct VfsNxCustomPath* custom, bool mount_devices, bool 
         vfs_save_init(save_writable);
         vfs_nx_add_device("save", VFS_TYPE_SAVE);
 #endif
-        
-        
+
         if (mount_breeze_devices) {
-            char album_path[FS_MAX_PATH];
-            FsFileSystem* album_nand = fsdev_wrapGetDeviceFileSystem("album_nand");
-            if (album_nand) {
-                if (!fsdev_wrapMountDevice("album_nand_today", current_day_path, *album_nand, false)) {
-                    vfs_nx_add_device("album_nand_today", VFS_TYPE_FS);
-                }
-            }
-            FsFileSystem* album_sd = fsdev_wrapGetDeviceFileSystem("album_sd");
-            if (album_sd) {
-                if (!fsdev_wrapMountDevice("album_sd_today", current_day_path, *album_sd, false)) {
-                    vfs_nx_add_device("album_sd_today", VFS_TYPE_FS);
-                }
-            }
-            
             vfs_nx_add_device("current_game_save", VFS_TYPE_SAVE);
         }
 
