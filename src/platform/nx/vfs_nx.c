@@ -41,7 +41,6 @@ static const FtpVfs* g_vfs[] = {
     [VFS_TYPE_STDIO] = &g_vfs_stdio,
     [VFS_TYPE_HDD] = &g_vfs_hdd,
 #endif
-    [VFS_TYPE_CHEATS] = &g_vfs_cheats,
     [VFS_TYPE_USER] = NULL,
 };
 
@@ -403,7 +402,6 @@ void vfs_nx_init(const struct VfsNxCustomPath* custom, bool mount_devices, bool 
             }
             
             vfs_nx_add_device("current_game_save", VFS_TYPE_SAVE);
-            vfs_nx_add_device("current_game_cheats", VFS_TYPE_CHEATS);
         }
 
         if (mount_devices){

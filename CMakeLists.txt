@@ -287,7 +287,6 @@ else()
             src/platform/nx/custom_commands.c
             src/platform/nx/utils.c
             src/log/log.c
-            src/platform/nx/vfs/vfs_nx_cheats.c
         )
 
         target_compile_definitions(ftpsrv PUBLIC
