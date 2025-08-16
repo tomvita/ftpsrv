@@ -230,6 +230,24 @@ void led_flash(void) {
     }
 }
 
+void sanitize_dev_name(char* name) {
+    if (!name) return;
+    char* d = name;
+    char* s = name;
+    while (*s) {
+        {
+            switch (*s) {
+                case ':':
+                    s++;
+                    break;
+                default:
+                    *d++ = *s++;
+                    break;
+            }
+        }
+    }
+    *d = '\0';
+}
 void sanitize_fs_name(char* name) {
     if (!name) return;
     char* d = name;

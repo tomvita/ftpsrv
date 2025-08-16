@@ -8,9 +8,10 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdbool.h>
+#include "../utils.h"
 
 struct VfsDeviceEntry {
-    char name[32];
+    char name[FsDevWrap_PATH_MAX];
 };
 
 struct VfsRootFile {

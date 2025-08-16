@@ -9,7 +9,7 @@ extern "C" {
 #include <switch.h>
 
 #define FsDevWrap_DEVICES_MAX 32
-#define FsDevWrap_PATH_MAX 32
+#define FsDevWrap_PATH_MAX 64
 
 Result fsdev_wrapMountSdmc(void);
 Result fsdev_wrapMountImage(const char* path, FsImageDirectoryId id);
@@ -26,6 +26,7 @@ void fsdev_wrapUnmountAll(void);
 
 void led_flash(void);
 void sanitize_fs_name(char* name);
+void sanitize_dev_name(char* name);
 
 #ifdef __cplusplus
 }
