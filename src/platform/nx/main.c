@@ -230,6 +230,11 @@ int main(int argc, char** argv) {
                 if (kDown & HidNpadButton_Plus) {
                     break;
                 }
+                if (kDown & HidNpadButton_B) {
+#define BREEZE_NRO "/switch/Breeze/Breeze.nro"
+                    envSetNextLoad(BREEZE_NRO, BREEZE_NRO);
+                    break;
+                }
 
                 processEvents();
                 svcSleepThread(1e+9 / 60);
