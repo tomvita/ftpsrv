@@ -261,6 +261,7 @@ void sanitize_fs_name(char* name) {
             }
             // "–" is 0xE2 0x80 0x93
             if ((unsigned char)*s == 0xE2 && (unsigned char)*(s + 1) == 0x80 && (unsigned char)*(s + 2) == 0x93) {
+                *d++ = '-';
                 s += 3;
                 continue;
             }
@@ -292,7 +293,6 @@ void sanitize_fs_name(char* name) {
                 case '\\':
                 case '/':
                 case '"':
-                case '-':
                     s++;
                     break;
                 // case ' ':
