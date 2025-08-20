@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+// #include "minIni.h"
 
 #define NCM_SIZE 2
 #define DEVICE_NUM 32
@@ -389,6 +390,7 @@ void vfs_nx_update_config_mounts(void) {
                 sanitize_dev_name(name_64);
                 sanitize_fs_name(name.str);
                 snprintf(breeze_name_mount_str, sizeof(breeze_name_mount_str), "/switch/breeze/cheats/%s", name.str);
+                // ini_puts("Nx-App", "ftpsrv_name", breeze_name_mount_str, "/switch/breeze/config.ini");
                 log_file_fwrite("nx: %s=%s", name_64, breeze_name_mount_str);
                 if (!fsdev_wrapMountDevice(name_64, breeze_name_mount_str, *sdmc, false)) {
                     vfs_nx_add_device(name_64, VFS_TYPE_FS);
