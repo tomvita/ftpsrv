@@ -1162,7 +1162,7 @@ static void ftp_cmd_STAT(struct FtpSession* session, const char* data) {
 
 // HELP <CRLF> | 211, 214, 500, 501, 502, 421
 static void ftp_cmd_HELP(struct FtpSession* session, const char* data) {
-    ftp_client_msg(session, 214, "ftpsrv " FTPSRV_VERSION_STR " By TotalJustice. Mount Breeze Devices 1.0.1 by Tomvita");
+    ftp_client_msg(session, 214, "ftpsrv " FTPSRV_VERSION_STR " By TotalJustice. Mount Breeze Devices 1.0.2 by Tomvita");
 }
 
 // NOOP <CRLF> | 200, 500, 421

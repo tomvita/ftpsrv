@@ -133,7 +133,7 @@ static int error_loop(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    consolePrint("\n[ftpsrv " FTPSRV_VERSION_STR " By TotalJustice Mount Breeze Devices 1.0.1 by Tomvita]\n\n");
+    consolePrint("\n[ftpsrv " FTPSRV_VERSION_STR " By TotalJustice Mount Breeze Devices 1.0.2 by Tomvita]\n\n");
 
     padConfigureInput(8, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
