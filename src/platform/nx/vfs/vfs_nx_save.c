@@ -607,7 +607,7 @@ static void rescan_users(void) {
 static int vfs_save_open(void* user, const char* path, enum FtpVfsOpenMode mode) {
     struct VfsSaveFile* f = user;
     f->data = get_type(path);
-    if (mode != FtpVfsOpenMode_READ && (!g_writable || f->data.type != SaveDirType_ZipApp)) {
+    if (mode != FtpVfsOpenMode_READ && !g_writable) {
         errno = EROFS;
         return -1;
     }
