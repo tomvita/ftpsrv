@@ -295,6 +295,10 @@ else()
             VFS_NX_BUFFER_WRITES=1
         )
 
+        # zlib (libz) headers live in devkitPro portlibs/switch/include but are
+        # not on the default include path; vfs_nx.c uses zlib (inflate, etc.).
+        target_include_directories(ftpsrv PUBLIC ${DEVKITPRO}/portlibs/switch/include)
+
         if (USE_VFS_SAVE)
             list(APPEND NX_SRC src/platform/nx/vfs/vfs_nx_save.c)
         endif()
@@ -326,6 +330,21 @@ else()
             )
 
             FetchContent_MakeAvailable(libusbhsfs)
+
+            # Patch libusbhsfs source/usb_common.h: libnx now exposes
+            # `enum usb_request_type` and `enum usb_request_recipient` in
+            # <switch/services/usb.h>, which conflicts with the duplicate
+            # declarations in libusbhsfs. Comment them out if not already.
+            set(_usbhsfs_common_h "${libusbhsfs_SOURCE_DIR}/source/usb_common.h")
+            file(READ "${_usbhsfs_common_h}" _usbhsfs_common_contents)
+            if (NOT _usbhsfs_common_contents MATCHES "FTPSRV_PATCHED_USB_ENUMS")
+                string(REPLACE
+                    "enum usb_request_type {\n    USB_REQUEST_TYPE_STANDARD = (0x00 << 5),\n    USB_REQUEST_TYPE_CLASS    = (0x01 << 5),\n    USB_REQUEST_TYPE_VENDOR   = (0x02 << 5),\n    USB_REQUEST_TYPE_RESERVED = (0x03 << 5),\n};\n\nenum usb_request_recipient {\n    USB_RECIPIENT_DEVICE    = 0x00,\n    USB_RECIPIENT_INTERFACE = 0x01,\n    USB_RECIPIENT_ENDPOINT  = 0x02,\n    USB_RECIPIENT_OTHER     = 0x03,\n};"
+                    "/* FTPSRV_PATCHED_USB_ENUMS: enums provided by libnx <switch/services/usb.h> */"
+                    _usbhsfs_common_contents "${_usbhsfs_common_contents}")
+                file(WRITE "${_usbhsfs_common_h}" "${_usbhsfs_common_contents}")
+            endif()
+
             add_library(libusbhsfs
                 ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_drive.c
                 ${libusbhsfs_SOURCE_DIR}/source/usbhsfs_log.c
@@ -384,7 +403,7 @@ else()
         endif()
 
         ftp_add(ftpexe)
-        target_link_libraries(ftpexe PRIVATE ftpsrv minIni)
+        target_link_libraries(ftpexe PRIVATE ftpsrv minIni z)
 
         nx_generate_nacp(
             OUTPUT ftpexe.nacp
@@ -409,12 +428,14 @@ else()
             VFS_NX_BUFFER_WRITES=0
         )
 
+        target_include_directories(ftpsrv_sysmod PUBLIC ${DEVKITPRO}/portlibs/switch/include)
+
         add_executable(sysftp
             src/platform/nx/main_sysmod.c
             ${NX_SRC}
         )
         target_compile_options(sysftp PRIVATE ${gcc_warning_flags})
-        target_link_libraries(sysftp PRIVATE ftpsrv_sysmod minIni)
+        target_link_libraries(sysftp PRIVATE ftpsrv_sysmod minIni z)
         ftp_add(sysftp)
 
         target_compile_definitions(ftpsrv_sysmod PUBLIC

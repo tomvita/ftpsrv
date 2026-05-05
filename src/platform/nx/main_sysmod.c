@@ -145,13 +145,21 @@ static u32 socketSelectVersion(void) {
 void __libnx_init_time(void);
 
 // Newlib heap configuration function (makes malloc/free work).
+// Sysmodules don't get a heap by default; libnx zero-inits fake_heap_*.
+// We carve out a static block so malloc/free work. ~96 KB is enough to cover
+// the worst-case allocations we make (NACP DEFLATE decompression: ~12 KB raw
+// + ~24 KB decompressed entry table + zlib internal inflate state ~7 KB,
+// plus minIni / fsdev / accountInitialize transient allocs and headroom for
+// fragmentation).
+#define SYSFTP_HEAP_SIZE (96 * 1024)
+static alignas(0x1000) u8 g_sysftp_heap[SYSFTP_HEAP_SIZE];
+
 void __libnx_initheap(void) {
     extern char* fake_heap_start;
     extern char* fake_heap_end;
 
-    // Configure the newlib heap.
-    fake_heap_start = NULL;
-    fake_heap_end   = NULL;
+    fake_heap_start = (char*)g_sysftp_heap;
+    fake_heap_end   = (char*)g_sysftp_heap + sizeof(g_sysftp_heap);
 }
 
 void __appInit(void) {

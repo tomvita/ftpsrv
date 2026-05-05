@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <zlib.h>
 // #include "minIni.h"
 
 #define NCM_SIZE 2
@@ -239,6 +240,128 @@ Result get_app_name2(u64 app_id, NcmContentMetaDatabase* db, NcmContentStorage* 
     }
 
     name->str[0] = '\0';
+
+    // libnx 4.7.0 / HOS 21.0.0+: when nacp.titles_data_format == 1 the NacpLanguageEntryData
+    // union holds DEFLATE-compressed bytes (raw, wbits=-15) that decompress to NacpLanguageEntry[32],
+    // not the legacy NacpLanguageEntry[16]. Reading at lang_index*sizeof(NacpLanguageEntry) returns
+    // garbage for those titles. NACP `titles_data_format` field offset is 0x3038 (well-known per
+    // switchbrew, immediately after lang_data[0x3000] + isbn[0x25] + a few small fields).
+    {
+        u8 fmt = 0;
+        u64 fmt_read = 0;
+        // Offset of titles_data_format inside NacpStruct. Computed from libnx nacp.h:
+        //   lang_data(0x3000) + isbn(0x25) + startup_user_account(1) + user_account_switch_lock(1)
+        //   + add_on_content_registration_type(1) + attribute_flag(4) + supported_language_flag(4)
+        //   + parental_control_flag(4) + screenshot(1) + video_capture(1) + data_loss_confirmation(1)
+        //   + play_log_policy(1) + presence_group_id(8) + rating_age[0x20] + display_version[0x10]
+        //   + add_on_content_base_id(8) + save_data_owner_id(8) + 6*u64 saves(0x30) + app_err_cat(8)
+        //   + local_communication_id[8](0x40) + 5*u8(5) + reserved(1) + crash_report(1) + hdcp(1)
+        //   + pseudo_device_id_seed(8) + bcat_passphrase[0x41] + startup_user_account_option(1)
+        //   + reserved_for_user_account_save_data_operation[6] + 4*u64 saves_max(0x20)
+        //   + temporary_storage(8) + cache_storage_size(8) + cache_storage_journal_size(8)
+        //   + cache_storage_data_and_journal_size_max(8) + cache_storage_index_max(2)
+        //   + reserved_x318a(1) + runtime_upgrade(1) + supporting_limited_apps(4)
+        //   + play_log_queryable_application_id[16](0x80) + play_log_query_capability(1)
+        //   + repair_flag(1) + program_index(1) + required_network_service_license(1)
+        //   + application_error_code_prefix(1) + titles_data_format(1)
+        //   = 0x3000 + 0x25 + 0x12 + 0x20 + 0x10 + 0x10 + 0x30 + 0x8 + 0x40 + 0x8 + 0x10
+        //     + 0x8 + 0x41 + 0x7 + 0x20 + 0x20 + 0x4 + 0x6 + 0x80 + 0x4 + 1
+        //   The NACP `titles_data_format` field is at absolute offset 0x3038 per switchbrew docs.
+        // To be safe and robust against any libnx layout drift, we read via `offsetof` of the
+        // NacpStruct field rather than a magic number.
+        const s64 fmt_off = (s64)offsetof(NacpStruct, titles_data_format);
+        rc = fsFileRead(&file, fmt_off, &fmt, sizeof(fmt), 0, &fmt_read);
+        if (R_SUCCEEDED(rc) && fmt_read == 1 && fmt == 1) {
+            // Read compressed header: u16 size at offset 0, then up to 0x2FFE bytes of DEFLATE.
+            // Buffers are large (~12 KB raw + ~24 KB decompressed = ~36 KB total) and would
+            // overflow the small per-session FTP thread stack, so allocate on the heap.
+            const size_t raw_cap = 2 + 0x2FFE;
+            u8* raw = (u8*)malloc(raw_cap);
+            NacpLanguageEntry* decompressed = (NacpLanguageEntry*)malloc(sizeof(NacpLanguageEntry) * 32);
+            if (!raw || !decompressed) {
+                free(raw);
+                free(decompressed);
+                fsFileClose(&file);
+                fsFsClose(&fs);
+                return MAKERESULT(Module_Libnx, LibnxError_HeapAllocFailed);
+            }
+
+            u64 raw_read = 0;
+            rc = fsFileRead(&file, 0, raw, raw_cap, 0, &raw_read);
+            if (R_FAILED(rc) || raw_read < 2) {
+                Result rret = R_FAILED(rc) ? rc : MAKERESULT(Module_Libnx, LibnxError_BadInput);
+                free(raw);
+                free(decompressed);
+                fsFileClose(&file);
+                fsFsClose(&fs);
+                return rret;
+            }
+            const u16 csize = (u16)(raw[0] | (raw[1] << 8));
+            if (csize == 0 || csize > 0x2FFE || (u64)(2 + csize) > raw_read) {
+                free(raw);
+                free(decompressed);
+                fsFileClose(&file);
+                fsFsClose(&fs);
+                return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+            }
+
+            memset(decompressed, 0, sizeof(NacpLanguageEntry) * 32);
+
+            z_stream zs;
+            memset(&zs, 0, sizeof(zs));
+            if (inflateInit2(&zs, -15) != Z_OK) {
+                free(raw);
+                free(decompressed);
+                fsFileClose(&file);
+                fsFsClose(&fs);
+                return MAKERESULT(Module_Libnx, LibnxError_HeapAllocFailed);
+            }
+            zs.next_in   = &raw[2];
+            zs.avail_in  = csize;
+            zs.next_out  = (Bytef*)decompressed;
+            zs.avail_out = sizeof(NacpLanguageEntry) * 32;
+            const int zrc = inflate(&zs, Z_FINISH);
+            inflateEnd(&zs);
+            if (zrc != Z_STREAM_END && zrc != Z_OK) {
+                free(raw);
+                free(decompressed);
+                fsFileClose(&file);
+                fsFsClose(&fs);
+                return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+            }
+
+            // Pick entry: try g_lang_index first, then any non-empty slot in [0..31].
+            const NacpLanguageEntry* chosen = NULL;
+            if (g_lang_index < 32 && decompressed[g_lang_index].name[0] != '\0') {
+                chosen = &decompressed[g_lang_index];
+            } else {
+                for (int i = 0; i < 32; i++) {
+                    if (decompressed[i].name[0] != '\0') {
+                        chosen = &decompressed[i];
+                        break;
+                    }
+                }
+            }
+
+            if (chosen) {
+                strncpy(name->str, chosen->name, sizeof(name->str) - 1);
+                name->str[sizeof(name->str) - 1] = '\0';
+                free(raw);
+                free(decompressed);
+                fsFileClose(&file);
+                fsFsClose(&fs);
+                return 0;
+            }
+
+            free(raw);
+            free(decompressed);
+            fsFileClose(&file);
+            fsFsClose(&fs);
+            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        }
+        // fmt == 0 (or unreadable) -> fall through to legacy path below.
+    }
+
     s64 off = g_lang_index * sizeof(NacpLanguageEntry);
     u64 bytes_read;
     rc = fsFileRead(&file, off, name->str, sizeof(name->str), 0, &bytes_read);
