@@ -380,7 +380,7 @@ Result get_app_name2(u64 app_id, NcmContentMetaDatabase* db, NcmContentStorage* 
     return rc;
 }
 
-Result get_app_name(u64 app_id, NcmContentId* id, struct AppName* name) {
+static Result get_app_name_exact(u64 app_id, NcmContentId* id, struct AppName* name) {
     Result rc;
 
     // sorted based on most common
@@ -413,6 +413,20 @@ Result get_app_name(u64 app_id, NcmContentId* id, struct AppName* name) {
     }
 
     return rc;
+}
+
+Result get_app_name(u64 app_id, NcmContentId* id, struct AppName* name) {
+    Result rc = get_app_name_exact(app_id, id, name);
+    if (R_SUCCEEDED(rc) || !(app_id & 0xFULL)) {
+        return rc;
+    }
+
+    // Multi-program applications can run under a program ID whose low nibble
+    // is the program index, while Application/Control metadata is stored under
+    // the base application ID (program index 0).
+    const u64 base_app_id = app_id & ~0xFULL;
+    log_file_fwrite("nx: app metadata lookup failed for %016lX; retrying %016lX\n", app_id, base_app_id);
+    return get_app_name_exact(base_app_id, id, name);
 }
 
 // taken from nxdumptool.
