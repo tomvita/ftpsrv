@@ -223,6 +223,13 @@ void __appInit(void) {
 
     hidsysInitialize();
     __libnx_init_time();
+    // time() now runs from the boot time libnx just read plus the tick
+    // counter, so the time service is no longer needed. Clock objects are a
+    // small pool shared by every program: held here for the life of the
+    // sysmodule, they left new homebrew (hbmenu, sphaira, Breeze) failing
+    // timeInitialize -- InitFail_Time at start -- while a game that takes a
+    // couple (RXN -RAIXIN-) was running. libtesla does the same.
+    timeExit();
 }
 
 // Service deinitialization.
@@ -236,6 +243,5 @@ void __appExit(void) {
     bsdExit();
     fsdev_wrapUnmountAll();
     fsExit();
-    timeExit();
     smExit();
 }
