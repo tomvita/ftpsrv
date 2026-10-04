@@ -248,10 +248,11 @@ void sanitize_dev_name(char* name) {
     }
     *d = '\0';
 }
-void sanitize_fs_name(char* name) {
-    if (!name) return;
+bool sanitize_fs_name(char* name) {
+    if (!name) return false;
     char* d = name;
     char* s = name;
+    size_t folded = 0;
     while (*s) {
         if (((unsigned char)*s) >= 0x80) {
             // "®" is 0xC2 0xAE
@@ -278,12 +279,16 @@ void sanitize_fs_name(char* name) {
             }
 
             // Generic multi-byte char handling from GetLegacySanitizedTitleName
+            // Read the lead byte first: d can equal s, and the apostrophe would overwrite it,
+            // giving one apostrophe per byte instead of one per character.
+            const unsigned char lead = (unsigned char)*s;
             *d++ = '\'';
-            if ((*s & 0xE0) == 0xC0)
+            folded++;
+            if ((lead & 0xE0) == 0xC0)
                 s += 2;
-            else if ((*s & 0xF0) == 0xE0)
+            else if ((lead & 0xF0) == 0xE0)
                 s += 3;
-            else if ((*s & 0xF8) == 0xF0)
+            else if ((lead & 0xF8) == 0xF0)
                 s += 4;
             else
                 s++;  // Should not happen with valid UTF-8
@@ -293,6 +298,12 @@ void sanitize_fs_name(char* name) {
                 case '\\':
                 case '/':
                 case '"':
+                // rejected by the SD filesystem as well; Breeze drops them from the folder name too
+                case '*':
+                case '?':
+                case '<':
+                case '>':
+                case '|':
                     s++;
                     break;
                 // case ' ':
@@ -306,4 +317,11 @@ void sanitize_fs_name(char* name) {
         }
     }
     *d = '\0';
+
+    // Same rule as Breeze: a name that is mostly apostrophes is not unique, so the caller adds the title id.
+    size_t readable = 0;
+    for (const char* p = name; *p; p++) {
+        if ((*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) readable++;
+    }
+    return folded > readable;
 }

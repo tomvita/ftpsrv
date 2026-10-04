@@ -25,6 +25,8 @@ static struct VfsDeviceEntry g_device[DEVICE_NUM];
 static enum VFS_TYPE g_device_type[DEVICE_NUM];
 static u32 g_device_count;
 static bool g_skip_ascii_convert = false;
+// Name of the running title's mount when it is listed at the root as a plain folder (no colon).
+static char g_title_alias[FsDevWrap_PATH_MAX];
 
 static const FtpVfs* g_vfs[] = {
     [VFS_TYPE_NONE] = &g_vfs_none,
@@ -74,11 +76,35 @@ static enum VFS_TYPE get_type(const char* path) {
     }
 }
 
+// Length of the title folder name at the start of path, or 0 if path is not under it.
+static size_t title_alias_len(const char* path) {
+    if (!g_title_alias[0] || !path || strchr(path, ':')) {
+        return 0;
+    }
+    if (path[0] == '/') {
+        path++;
+    }
+    const size_t len = strlen(g_title_alias);
+    if (!strncmp(path, g_title_alias, len) && (path[len] == '\0' || path[len] == '/')) {
+        return len;
+    }
+    return 0;
+}
+
 static const char* fix_path(const char* path, enum VFS_TYPE type) {
     switch (type) {
         case VFS_TYPE_NONE: return NULL;
         case VFS_TYPE_ROOT: return "/";
         default:
+            if (title_alias_len(path)) {
+                // "/Title/x" -> "Title:/x", which the mount then resolves. Two buffers, as rename fixes two paths.
+                static char alias_path[2][FS_MAX_PATH + FsDevWrap_PATH_MAX];
+                static u32 alias_index;
+                char* out = alias_path[alias_index++ & 1];
+                const char* rest = path + (path[0] == '/') + title_alias_len(path);
+                snprintf(out, sizeof(alias_path[0]), "%s:%s", g_title_alias, rest);
+                return out;
+            }
             if (strchr(path, ':') && path[0] == '/') {
                 return path + 1;
             }
@@ -477,7 +503,7 @@ void vfs_nx_remove_device(const char* name) {
     snprintf(full_name, sizeof(full_name), "%s:", name);
 
     for (u32 i = 0; i < g_device_count; i++) {
-        if (strcmp(g_device[i].name, full_name) == 0) {
+        if (strcmp(g_device[i].name, full_name) == 0 || strcmp(g_device[i].name, name) == 0) {
             for (u32 j = i; j < g_device_count - 1; j++) {
                 g_device[j] = g_device[j + 1];
                 g_device_type[j] = g_device_type[j + 1];
@@ -511,6 +537,7 @@ void vfs_nx_update_config_mounts(void) {
                 vfs_nx_remove_device(breeze_tid_mount);
                 fsdev_wrapUnmountDevice(name_64);
                 vfs_nx_remove_device(name_64);
+                g_title_alias[0] = '\0';
                 snprintf(ams_tid_mount_str, sizeof(ams_tid_mount_str), "/atmosphere/contents/%016lx", current_tid);
                 log_file_fwrite("nx: ams_tid_mount=%s", ams_tid_mount_str);
                 if (!fsdev_wrapMountDevice(ams_tid_mount, ams_tid_mount_str, *sdmc, false)) {
@@ -525,12 +552,25 @@ void vfs_nx_update_config_mounts(void) {
                 strncpy(name_64, name.str, sizeof(name_64) - 2);
                 name_64[sizeof(name_64) - 2] = '\0';
                 sanitize_dev_name(name_64);
-                sanitize_fs_name(name.str);
-                snprintf(breeze_name_mount_str, sizeof(breeze_name_mount_str), "/switch/breeze/cheats/%s", name.str);
+                if (sanitize_fs_name(name.str)) {
+                    snprintf(breeze_name_mount_str, sizeof(breeze_name_mount_str), "/switch/breeze/cheats/%s %016lX", name.str, current_tid);
+                } else {
+                    snprintf(breeze_name_mount_str, sizeof(breeze_name_mount_str), "/switch/breeze/cheats/%s", name.str);
+                }
                 // ini_puts("Nx-App", "ftpsrv_name", breeze_name_mount_str, "/switch/breeze/config.ini");
                 log_file_fwrite("nx: %s=%s", name_64, breeze_name_mount_str);
                 if (!fsdev_wrapMountDevice(name_64, breeze_name_mount_str, *sdmc, false)) {
                     vfs_nx_add_device(name_64, VFS_TYPE_FS);
+                    // List it as a plain folder, unless the SD root really has a folder of that name.
+                    static char root_path[FS_MAX_PATH];
+                    static char listed[FsDevWrap_PATH_MAX + 2];
+                    FsDirEntryType entry_type;
+                    snprintf(root_path, sizeof(root_path), "/%s", name_64);
+                    snprintf(listed, sizeof(listed), "%s:", name_64);
+                    if (g_device_count && !strcmp(g_device[g_device_count - 1].name, listed) && R_FAILED(fsFsGetEntryType(sdmc, root_path, &entry_type))) {
+                        snprintf(g_title_alias, sizeof(g_title_alias), "%s", name_64);
+                        snprintf(g_device[g_device_count - 1].name, sizeof(g_device[0].name), "%s", name_64);
+                    }
                 }
             }
         }

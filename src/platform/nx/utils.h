@@ -25,7 +25,8 @@ void fsdev_wrapUnmountDevice(const char* name);
 void fsdev_wrapUnmountAll(void);
 
 void led_flash(void);
-void sanitize_fs_name(char* name);
+// returns true when the name is mostly folded characters and needs the title id to be unique
+bool sanitize_fs_name(char* name);
 void sanitize_dev_name(char* name);
 
 #ifdef __cplusplus
