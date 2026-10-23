@@ -647,6 +647,104 @@ static int ftp_custom_cmd_HOME(void* userdata, const char* data, char* msg_buf, 
     return code;
 }
 
+// MEM: how full each physical memory pool is, then the processes using the
+// most memory, largest first, for as many as fit in the reply. Made for the
+// case where library applets (Breeze, the SwitchU menu) fail to start out of
+// memory and the pools have to be read before a reboot clears them.
+#define MEM_MAX_PROCESSES 0x100
+
+struct MemProcess {
+    u64 program_id;
+    u64 used;
+};
+
+// Atmosphere pm:dmnt 65000 AtmosphereGetProcessInfo, which libnx doesn't wrap.
+static Result mem_process_handle(u64 pid, Handle* out, u64* program_id) {
+    struct {
+        u64 program_id;
+        u8 storage_id;
+        u8 pad[7];
+        u8 override_status[0x10];
+    } info = {0};
+    Result rc = serviceDispatchInOut(pmdmntGetServiceSession(), 65000, pid, info,
+        .out_handle_attrs = { SfOutHandleAttr_HipcCopy },
+        .out_handles = out,
+    );
+    if (R_SUCCEEDED(rc)) {
+        *program_id = info.program_id;
+    }
+    return rc;
+}
+
+static int mem_compare(const void* a, const void* b) {
+    const u64 ua = ((const struct MemProcess*)a)->used;
+    const u64 ub = ((const struct MemProcess*)b)->used;
+    return ua < ub ? 1 : ua > ub ? -1 : 0;
+}
+
+static int ftp_custom_cmd_MEM(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
+    static const char* const pools[] = { "application", "applet", "system", "unsafe" };
+    static u64 pids[MEM_MAX_PROCESSES];
+    static struct MemProcess procs[MEM_MAX_PROCESSES];
+    // the reply goes out with its code and CRLF in a buffer this size
+    const unsigned len = msg_buf_len > 16 ? msg_buf_len - 16 : msg_buf_len;
+    unsigned off = 0;
+
+    off += snprintf(msg_buf + off, len - off, "MB used/total:");
+    for (u64 i = 0; i < 4 && off < len; i++) {
+        u64 total = 0, used = 0;
+        if (R_FAILED(svcGetSystemInfo(&total, SystemInfoType_TotalPhysicalMemorySize, INVALID_HANDLE, i)) ||
+            R_FAILED(svcGetSystemInfo(&used, SystemInfoType_UsedPhysicalMemorySize, INVALID_HANDLE, i))) {
+            off += snprintf(msg_buf + off, len - off, " %s ?", pools[i]);
+        } else {
+            off += snprintf(msg_buf + off, len - off, " %s %.1f/%.1f (%.1f free)", pools[i],
+                used / 1048576.0, total / 1048576.0, (total - used) / 1048576.0);
+        }
+    }
+
+    s32 count = 0;
+    unsigned n = 0;
+    if (off < len && R_SUCCEEDED(svcGetProcessList(&count, pids, MEM_MAX_PROCESSES)) &&
+        R_SUCCEEDED(pmdmntInitialize())) {
+        for (s32 i = 0; i < count; i++) {
+            Handle handle = INVALID_HANDLE;
+            u64 program_id = 0, used = 0;
+            // pm doesn't track the initial processes (fs, loader, ...): skipped.
+            if (R_FAILED(mem_process_handle(pids[i], &handle, &program_id))) {
+                continue;
+            }
+            if (R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, handle, 0))) {
+                procs[n].program_id = program_id;
+                procs[n].used = used;
+                n++;
+            }
+            svcCloseHandle(handle);
+        }
+        pmdmntExit();
+    }
+
+    if (n && off < len) {
+        qsort(procs, n, sizeof(procs[0]), mem_compare);
+        off += snprintf(msg_buf + off, len - off, "; processes MB:");
+        for (unsigned i = 0; i < n && off < len; i++) {
+            char entry[40];
+            // system programs (01000000000xxxxx) by their last hex digits
+            if ((procs[i].program_id >> 20) == 0x01000000000ULL) {
+                snprintf(entry, sizeof(entry), " %lX:%.1f", procs[i].program_id & 0xFFFFF, procs[i].used / 1048576.0);
+            } else {
+                snprintf(entry, sizeof(entry), " %016lX:%.1f", procs[i].program_id, procs[i].used / 1048576.0);
+            }
+            // keep room for " ..." when the list doesn't fit
+            if (off + strlen(entry) + 4 >= len) {
+                off += snprintf(msg_buf + off, len - off, " ...");
+                break;
+            }
+            off += snprintf(msg_buf + off, len - off, "%s", entry);
+        }
+    }
+    return 200;
+}
+
 const struct FtpSrvCustomCommand CUSTOM_COMMANDS[] = {
     // reboot console
     { "REBT", ftp_custom_cmd_REBT, NULL, 1, 0 },
@@ -666,6 +764,8 @@ const struct FtpSrvCustomCommand CUSTOM_COMMANDS[] = {
     { "ACC", ftp_custom_cmd_ACC, NULL, 1, 0 },
     // press the HOME button
     { "HOME", ftp_custom_cmd_HOME, NULL, 1, 0 },
+    // memory pools and the largest processes
+    { "MEM", ftp_custom_cmd_MEM, NULL, 1, 0 },
 };
 
 const unsigned CUSTOM_COMMANDS_SIZE = sizeof(CUSTOM_COMMANDS) / sizeof(CUSTOM_COMMANDS[0]);
