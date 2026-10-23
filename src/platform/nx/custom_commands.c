@@ -525,6 +525,128 @@ static int ftp_custom_cmd_ACC(void* userdata, const char* data, char* msg_buf, u
     return code;
 }
 
+// HOME: presses the HOME button, so the HOME menu (or the SwitchU daemon, which
+// starts Breeze on HOME) answers as if it had been pressed on a controller.
+// A virtual Pro Controller is attached through hid:dbg for the press, the way
+// Breeze's PC connect does it. Some games give it no player slot (a real
+// controller in player 1 and a game for one player): then the press goes
+// through that real controller instead, which gets its own state back after.
+#define HOME_NO_SLOT 0xFFFFFFFFU
+#define HOME_BUTTON BIT(18) // Hdls keeps bit 18 for HOME
+
+static alignas(0x1000) u8 g_home_workmem[0x1000];
+
+static u32 home_slot(HiddbgHdlsSessionId session, HiddbgHdlsHandle handle, HiddbgHdlsNpadAssignment* as) {
+    if (R_FAILED(hiddbgDumpHdlsNpadAssignmentState(session, as))) {
+        return HOME_NO_SLOT;
+    }
+    for (s32 i = 0; i < as->total_entries && i < 0x10; i++) {
+        if (as->entries[i].handle.handle == handle.handle) {
+            return as->entries[i].unk_x8;
+        }
+    }
+    return HOME_NO_SLOT;
+}
+
+static Result home_press(HiddbgHdlsHandle handle, const HiddbgHdlsState* base) {
+    HiddbgHdlsState st = *base;
+    st.buttons |= HOME_BUTTON;
+    Result rc = hiddbgSetHdlsState(handle, &st);
+    if (R_SUCCEEDED(rc)) {
+        svcSleepThread(100000000ULL);
+        rc = hiddbgSetHdlsState(handle, base);
+        svcSleepThread(50000000ULL);
+    }
+    return rc;
+}
+
+static int ftp_custom_cmd_HOME(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
+    Result rc;
+    int code = FTP_DEFAULT_ERROR_CODE;
+    static HiddbgHdlsNpadAssignment as;
+    static HiddbgHdlsStateList states;
+
+    if (R_FAILED(rc = hiddbgInitialize())) {
+        snprintf(msg_buf, msg_buf_len, "Failed: hiddbgInitialize() 0x%08X", rc);
+        return code;
+    }
+
+    HiddbgHdlsSessionId session = {0};
+    if (R_FAILED(rc = hiddbgAttachHdlsWorkBuffer(&session, g_home_workmem, sizeof(g_home_workmem)))) {
+        snprintf(msg_buf, msg_buf_len, "Failed: hiddbgAttachHdlsWorkBuffer() 0x%08X", rc);
+        hiddbgExit();
+        return code;
+    }
+
+    HiddbgHdlsDeviceInfo info = {0};
+    info.deviceType = HidDeviceType_FullKey3;
+    info.npadInterfaceType = HidNpadInterfaceType_Bluetooth;
+    info.singleColorBody = RGBA8_MAXALPHA(255, 255, 255);
+    info.singleColorButtons = RGBA8_MAXALPHA(0, 0, 0);
+    info.colorLeftGrip = RGBA8_MAXALPHA(230, 255, 0);
+    info.colorRightGrip = RGBA8_MAXALPHA(0, 40, 20);
+    HiddbgHdlsHandle handle = {0};
+    if (R_FAILED(rc = hiddbgAttachHdlsVirtualDevice(&handle, &info))) {
+        snprintf(msg_buf, msg_buf_len, "Failed: hiddbgAttachHdlsVirtualDevice() 0x%08X", rc);
+    } else {
+        // It has no slot for a moment, and a press sent before it has one is lost.
+        u32 slot = HOME_NO_SLOT;
+        for (int i = 0; i < 50 && slot == HOME_NO_SLOT; i++) {
+            svcSleepThread(20000000ULL);
+            slot = home_slot(session, handle, &as);
+        }
+        svcSleepThread(50000000ULL);
+
+        if (slot != HOME_NO_SLOT) {
+            HiddbgHdlsState base = {0};
+            base.battery_level = 4;
+            if (R_FAILED(rc = home_press(handle, &base))) {
+                snprintf(msg_buf, msg_buf_len, "Failed: hiddbgSetHdlsState() 0x%08X", rc);
+            } else {
+                code = 200;
+                snprintf(msg_buf, msg_buf_len, "HOME pressed (virtual controller, player %u)", slot + 1);
+            }
+        } else if (R_FAILED(rc = hiddbgDumpHdlsNpadAssignmentState(session, &as)) ||
+                   R_FAILED(rc = hiddbgDumpHdlsStates(session, &states))) {
+            snprintf(msg_buf, msg_buf_len, "Failed: no slot for the virtual controller, and the controller table cannot be read 0x%08X", rc);
+        } else {
+            // The real controller in the lowest slot.
+            s32 pick = -1;
+            for (s32 i = 0; i < as.total_entries && i < 0x10; i++) {
+                const u32 s = as.entries[i].unk_x8;
+                if (as.entries[i].handle.handle == handle.handle || s >= 8) {
+                    continue;
+                }
+                if (pick < 0 || s < as.entries[pick].unk_x8) {
+                    pick = i;
+                }
+            }
+            HiddbgHdlsState base = {0};
+            bool found = false;
+            if (pick >= 0) {
+                for (s32 k = 0; k < states.total_entries && k < 0x10; k++) {
+                    if (states.entries[k].handle.handle == as.entries[pick].handle.handle) {
+                        base = states.entries[k].state;
+                        found = true;
+                    }
+                }
+            }
+            if (!found) {
+                snprintf(msg_buf, msg_buf_len, "Failed: no slot for the virtual controller and no controller to press HOME through");
+            } else if (R_FAILED(rc = home_press(as.entries[pick].handle, &base))) {
+                snprintf(msg_buf, msg_buf_len, "Failed: hiddbgSetHdlsState() through player %u 0x%08X", as.entries[pick].unk_x8 + 1, rc);
+            } else {
+                code = 200;
+                snprintf(msg_buf, msg_buf_len, "HOME pressed (through the controller in player %u: no slot for a virtual one)", as.entries[pick].unk_x8 + 1);
+            }
+        }
+        hiddbgDetachHdlsVirtualDevice(handle);
+    }
+    hiddbgReleaseHdlsWorkBuffer(session);
+    hiddbgExit();
+    return code;
+}
+
 const struct FtpSrvCustomCommand CUSTOM_COMMANDS[] = {
     // reboot console
     { "REBT", ftp_custom_cmd_REBT, NULL, 1, 0 },
@@ -542,6 +664,8 @@ const struct FtpSrvCustomCommand CUSTOM_COMMANDS[] = {
     { "TRMT", ftp_custom_cmd_TRMT, NULL, 1, 1 },
     // get current user account
     { "ACC", ftp_custom_cmd_ACC, NULL, 1, 0 },
+    // press the HOME button
+    { "HOME", ftp_custom_cmd_HOME, NULL, 1, 0 },
 };
 
 const unsigned CUSTOM_COMMANDS_SIZE = sizeof(CUSTOM_COMMANDS) / sizeof(CUSTOM_COMMANDS[0]);
