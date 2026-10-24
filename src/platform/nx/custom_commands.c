@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 // large enough size as to not explode the stack.
 #define HEKATE_INI_NAME_MAX 128
@@ -548,19 +549,32 @@ static u32 home_slot(HiddbgHdlsSessionId session, HiddbgHdlsHandle handle, Hiddb
     return HOME_NO_SLOT;
 }
 
-static Result home_press(HiddbgHdlsHandle handle, const HiddbgHdlsState* base) {
-    HiddbgHdlsState st = *base;
-    st.buttons |= HOME_BUTTON;
-    Result rc = hiddbgSetHdlsState(handle, &st);
-    if (R_SUCCEEDED(rc)) {
-        svcSleepThread(100000000ULL);
-        rc = hiddbgSetHdlsState(handle, base);
-        svcSleepThread(50000000ULL);
+#define KEY_MAX_PRESSES 16
+
+// One press per entry, in turn; an entry can hold several buttons (a chord).
+struct KeyPresses {
+    u64 buttons[KEY_MAX_PRESSES];
+    unsigned count;
+    const char* text; // what the reply calls it
+};
+
+static Result home_press(HiddbgHdlsHandle handle, const HiddbgHdlsState* base, const struct KeyPresses* keys) {
+    Result rc = 0;
+    for (unsigned i = 0; i < keys->count && R_SUCCEEDED(rc); i++) {
+        HiddbgHdlsState st = *base;
+        st.buttons |= keys->buttons[i];
+        rc = hiddbgSetHdlsState(handle, &st);
+        if (R_SUCCEEDED(rc)) {
+            svcSleepThread(100000000ULL);
+            rc = hiddbgSetHdlsState(handle, base);
+            // Long enough between presses for a menu to take each one.
+            svcSleepThread(i + 1 < keys->count ? 150000000ULL : 50000000ULL);
+        }
     }
     return rc;
 }
 
-static int ftp_custom_cmd_HOME(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
+static int press_keys(const struct KeyPresses* keys, char* msg_buf, unsigned msg_buf_len) {
     Result rc;
     int code = FTP_DEFAULT_ERROR_CODE;
     static HiddbgHdlsNpadAssignment as;
@@ -600,11 +614,11 @@ static int ftp_custom_cmd_HOME(void* userdata, const char* data, char* msg_buf, 
         if (slot != HOME_NO_SLOT) {
             HiddbgHdlsState base = {0};
             base.battery_level = 4;
-            if (R_FAILED(rc = home_press(handle, &base))) {
+            if (R_FAILED(rc = home_press(handle, &base, keys))) {
                 snprintf(msg_buf, msg_buf_len, "Failed: hiddbgSetHdlsState() 0x%08X", rc);
             } else {
                 code = 200;
-                snprintf(msg_buf, msg_buf_len, "HOME pressed (virtual controller, player %u)", slot + 1);
+                snprintf(msg_buf, msg_buf_len, "%s pressed (virtual controller, player %u)", keys->text, slot + 1);
             }
         } else if (R_FAILED(rc = hiddbgDumpHdlsNpadAssignmentState(session, &as)) ||
                    R_FAILED(rc = hiddbgDumpHdlsStates(session, &states))) {
@@ -632,12 +646,12 @@ static int ftp_custom_cmd_HOME(void* userdata, const char* data, char* msg_buf, 
                 }
             }
             if (!found) {
-                snprintf(msg_buf, msg_buf_len, "Failed: no slot for the virtual controller and no controller to press HOME through");
-            } else if (R_FAILED(rc = home_press(as.entries[pick].handle, &base))) {
+                snprintf(msg_buf, msg_buf_len, "Failed: no slot for the virtual controller and no controller to press %s through", keys->text);
+            } else if (R_FAILED(rc = home_press(as.entries[pick].handle, &base, keys))) {
                 snprintf(msg_buf, msg_buf_len, "Failed: hiddbgSetHdlsState() through player %u 0x%08X", as.entries[pick].unk_x8 + 1, rc);
             } else {
                 code = 200;
-                snprintf(msg_buf, msg_buf_len, "HOME pressed (through the controller in player %u: no slot for a virtual one)", as.entries[pick].unk_x8 + 1);
+                snprintf(msg_buf, msg_buf_len, "%s pressed (through the controller in player %u: no slot for a virtual one)", keys->text, as.entries[pick].unk_x8 + 1);
             }
         }
         hiddbgDetachHdlsVirtualDevice(handle);
@@ -645,6 +659,75 @@ static int ftp_custom_cmd_HOME(void* userdata, const char* data, char* msg_buf, 
     hiddbgReleaseHdlsWorkBuffer(session);
     hiddbgExit();
     return code;
+}
+
+static int ftp_custom_cmd_HOME(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
+    const struct KeyPresses keys = { { HOME_BUTTON }, 1, "HOME" };
+    return press_keys(&keys, msg_buf, msg_buf_len);
+}
+
+// KEY <press> [<press>...]: presses in turn, each a button name or several
+// joined by '+' (held together), e.g. "KEY A", "KEY DOWN DOWN A", "KEY ZL+ZR".
+static const struct { const char* name; u64 bit; } KEY_NAMES[] = {
+    { "A", HidNpadButton_A }, { "B", HidNpadButton_B }, { "X", HidNpadButton_X }, { "Y", HidNpadButton_Y },
+    { "LS", HidNpadButton_StickL }, { "RS", HidNpadButton_StickR },
+    { "L", HidNpadButton_L }, { "R", HidNpadButton_R }, { "ZL", HidNpadButton_ZL }, { "ZR", HidNpadButton_ZR },
+    { "PLUS", HidNpadButton_Plus }, { "MINUS", HidNpadButton_Minus },
+    { "LEFT", HidNpadButton_Left }, { "UP", HidNpadButton_Up }, { "RIGHT", HidNpadButton_Right }, { "DOWN", HidNpadButton_Down },
+    { "HOME", HOME_BUTTON }, { "CAPTURE", BIT(19) }, // Hdls keeps bit 19 for Capture
+};
+
+static int ftp_custom_cmd_KEY(void* userdata, const char* data, char* msg_buf, unsigned msg_buf_len) {
+    static char text[128];
+    struct KeyPresses keys = { {0}, 0, text };
+    snprintf(text, sizeof(text), "%s", data);
+    for (char* p = text; *p; p++) {
+        if (*p >= 'a' && *p <= 'z') {
+            *p -= 'a' - 'A';
+        }
+    }
+    const char* p = data;
+    while (*p) {
+        while (*p == ' ') {
+            p++;
+        }
+        if (!*p) {
+            break;
+        }
+        if (keys.count == KEY_MAX_PRESSES) {
+            snprintf(msg_buf, msg_buf_len, "Syntax error in parameters or arguments: at most %u presses", KEY_MAX_PRESSES);
+            return FTP_DEFAULT_ERROR_CODE;
+        }
+        u64 buttons = 0;
+        for (;;) {
+            const char* end = p;
+            while (*end && *end != ' ' && *end != '+') {
+                end++;
+            }
+            u64 bit = 0;
+            for (unsigned i = 0; i < sizeof(KEY_NAMES) / sizeof(KEY_NAMES[0]); i++) {
+                if (strlen(KEY_NAMES[i].name) == (size_t)(end - p) && !strncasecmp(KEY_NAMES[i].name, p, end - p)) {
+                    bit = KEY_NAMES[i].bit;
+                }
+            }
+            if (!bit) {
+                snprintf(msg_buf, msg_buf_len, "Syntax error in parameters or arguments: unknown button '%.*s' (A B X Y L R ZL ZR LS RS PLUS MINUS UP DOWN LEFT RIGHT HOME CAPTURE)", (int)(end - p), p);
+                return FTP_DEFAULT_ERROR_CODE;
+            }
+            buttons |= bit;
+            p = end;
+            if (*p != '+') {
+                break;
+            }
+            p++;
+        }
+        keys.buttons[keys.count++] = buttons;
+    }
+    if (!keys.count) {
+        snprintf(msg_buf, msg_buf_len, "Syntax error in parameters or arguments: KEY <button>[+<button>] ...");
+        return FTP_DEFAULT_ERROR_CODE;
+    }
+    return press_keys(&keys, msg_buf, msg_buf_len);
 }
 
 // MEM: how full each physical memory pool is, then the processes using the
@@ -764,6 +847,8 @@ const struct FtpSrvCustomCommand CUSTOM_COMMANDS[] = {
     { "ACC", ftp_custom_cmd_ACC, NULL, 1, 0 },
     // press the HOME button
     { "HOME", ftp_custom_cmd_HOME, NULL, 1, 0 },
+    // press buttons: KEY A, KEY DOWN A, KEY ZL+ZR
+    { "KEY", ftp_custom_cmd_KEY, NULL, 1, 1 },
     // memory pools and the largest processes
     { "MEM", ftp_custom_cmd_MEM, NULL, 1, 0 },
 };
